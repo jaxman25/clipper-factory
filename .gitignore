@@ -3,6 +3,7 @@ node_modules/
 out/
 build/
 dist/
+implementations/
 
 # Runtime media (never commit generated clips or sources)
 downloads/
