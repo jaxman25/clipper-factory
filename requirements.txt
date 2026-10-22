@@ -1,0 +1,8 @@
+yt-dlp
+faster-whisper
+opencv-python-headless
+mediapipe
+python-telegram-bot==20.7
+requests
+python-dotenv
+apscheduler

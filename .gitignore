@@ -1,0 +1,41 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Runtime media (never commit generated clips or sources)
+downloads/
+exports/
+queue/
+posted/
+state/
+*.mp4
+*.mp3
+*.wav
+*.webm
+*.mkv
+
+# Keep free bundled assets
+!assets/**
+!assets/*.wav
+!assets/*.png
+assets/broll/
+
+# Secrets and local auth
+.env
+.env.local
+auth.json
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

@@ -1,0 +1,24 @@
+{
+  "name": "african-clipper-factory",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Automatic African Tales clip factory: YouTube in, scheduled shorts out.",
+  "scripts": {
+    "dev": "next dev -p 3000",
+    "build": "next build",
+    "start": "node scripts/next-start.mjs",
+    "start:render": "python3 telegram_bot/bot.py & npm run start",
+    "lint": "next lint",
+    "assets": "node scripts/run-python.mjs scripts/make_assets.py",
+    "smoke": "node scripts/run-python.mjs scripts/smoke_render.py"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "next": "^14.2.35",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "timezone": "Africa/Nairobi",
+  "posting_times": ["19:00", "21:00"],
+  "shorts_per_video": 10,
+  "clip_min_seconds": 30,
+  "clip_max_seconds": 45,
+  "playback_speed": 1.1,
+  "drum_volume_db": -22,
+  "caption_color": "#FFD700",
+  "caption_words_per_card": 3,
+  "hook_seconds": 2,
+  "outro_seconds": 2,
+  "outro_text": "Follow for more African tales",
+  "hashtags": "#AfricanTales #AfricanFolklore #Storytime #Shorts #Africans",
+  "platforms": {
+    "instagram": true,
+    "tiktok": true
+  },
+  "viral_keywords": [
+    "warned", "forbidden", "spirit", "curse", "night", "disappeared", "village",
+    "grandmother", "grandfather", "chief", "witch", "ghost", "mermaid", "ancestors",
+    "ritual", "taboo", "sacrifice", "forest", "river", "moon", "secret", "never",
+    "don't", "do not", "blood", "death", "died", "buried", "grave", "midnight",
+    "prophecy", "dream", "hunter", "lion", "snake", "magic", "medicine man",
+    "disappear", "vanished", "screaming", "haunted", "cursed", "blessing", "elders",
+    "tradition", "legend", "myth", "true story", "happened", "terrifying", "warning"
+  ]
+}

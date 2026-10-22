@@ -1,0 +1,103 @@
+# Render Blueprint for the African Clipper Factory.
+#
+# The web service below is 100% free: Docker, /api/health check, and the
+# 19:00/21:00 EAT poster runs inside the bot process (ACF_ENABLE_SCHEDULER=1).
+#
+# Render Cron Jobs are NOT part of the free plan (minimum $1/month per job), so
+# they are intentionally commented out. If you are willing to pay that, remove
+# the leading "#" from the two cron blocks and set the two secrets.
+services:
+  - type: web
+    name: african-clipper-factory
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    startCommand: npm run start:render
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TZ
+        value: Africa/Nairobi
+      - key: ACF_DATA_ROOT
+        value: /tmp
+      - key: WHISPER_MODEL
+        value: tiny
+      - key: ACF_ENABLE_SCHEDULER
+        value: "1"
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: PEXELS_API_KEY
+        sync: false
+      - key: IG_USER_ID
+        sync: false
+      - key: IG_ACCESS_TOKEN
+        sync: false
+      - key: IG_GRAPH_VERSION
+        value: v21.0
+      - key: TIKTOK_AUTH_B64
+        sync: false
+      - key: TIKTOK_HEADLESS
+        value: "1"
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: DASHBOARD_USER
+        sync: false
+      - key: DASHBOARD_PASSWORD
+        sync: false
+
+  # - type: cron
+  #   name: acf-evening-post
+  #   runtime: docker
+  #   plan: starter
+  #   region: oregon
+  #   schedule: "0 16 * * *"          # 19:00 EAT
+  #   dockerfilePath: ./Dockerfile
+  #   dockerCommand: python3 scheduler/scheduler.py --run-once --time=evening
+  #   envVars:
+  #     - key: ACF_DATA_ROOT
+  #       value: /tmp
+  #     - key: TZ
+  #       value: Africa/Nairobi
+  #     - key: TELEGRAM_BOT_TOKEN
+  #       sync: false
+  #     - key: TELEGRAM_CHAT_ID
+  #       sync: false
+  #     - key: IG_USER_ID
+  #       sync: false
+  #     - key: IG_ACCESS_TOKEN
+  #       sync: false
+  #     - key: TIKTOK_AUTH_B64
+  #       sync: false
+  #     - key: PUBLIC_BASE_URL
+  #       sync: false
+  #
+  # - type: cron
+  #   name: acf-night-post
+  #   runtime: docker
+  #   plan: starter
+  #   region: oregon
+  #   schedule: "0 18 * * *"          # 21:00 EAT
+  #   dockerfilePath: ./Dockerfile
+  #   dockerCommand: python3 scheduler/scheduler.py --run-once --time=night
+  #   envVars:
+  #     - key: ACF_DATA_ROOT
+  #       value: /tmp
+  #     - key: TZ
+  #       value: Africa/Nairobi
+  #     - key: TELEGRAM_BOT_TOKEN
+  #       sync: false
+  #     - key: TELEGRAM_CHAT_ID
+  #       sync: false
+  #     - key: IG_USER_ID
+  #       sync: false
+  #     - key: IG_ACCESS_TOKEN
+  #       sync: false
+  #     - key: TIKTOK_AUTH_B64
+  #       sync: false
+  #     - key: PUBLIC_BASE_URL
+  #       sync: false
