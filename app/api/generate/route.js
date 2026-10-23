@@ -71,9 +71,18 @@ export async function POST(request) {
   }
 
   const jobId = sanitizeId(`job-${Date.now().toString(36)}`);
+  const worker = startPython(
+    'backend/main.py',
+    ['--url', url, '--job-id', jobId, '--num-shorts', String(numShorts)],
+    jobId
+  );
+
+  // Persist the worker PID in the job doc so the abort endpoint can
+  // signal the running worker by PID across module boundaries.
   writeJSON(path.join(DIRS.jobs, `${jobId}.json`), {
     id: jobId,
     status: 'running',
+    pid: worker.pid,
     stage: 'queued',
     progress: 0,
     message: 'Queued for the clip worker',
@@ -83,12 +92,6 @@ export async function POST(request) {
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   });
-
-  const worker = startPython(
-    'backend/main.py',
-    ['--url', url, '--job-id', jobId, '--num-shorts', String(numShorts)],
-    jobId
-  );
 
   // A worker that dies before writing status (bad interpreter, OOM) must not
   // leave the dashboard polling a phantom "running" job forever.
@@ -116,5 +119,10 @@ export async function POST(request) {
     }
   });
 
-  return Response.json({ ok: true, job_id: jobId, pid: worker.pid, log: worker.log }, { status: 202 });
+  return Response.json({
+    ok: true,
+    job_id: jobId,
+    pid: worker.pid,
+    log: worker.log,
+  }, { status: 202 });
 }

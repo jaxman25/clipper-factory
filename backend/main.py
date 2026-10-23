@@ -291,6 +291,41 @@ def _relative_words(candidate: viral.Candidate, clip_start: float) -> list[capti
     return out
 
 
+def _abort_handler(signum, frame) -> None:
+    """Interrupt point: cancel the running job and exit cleanly."""
+    common.warn(f"Received signal {signum}; cancelling {job_id}")
+    try:
+        if not job_id:
+            return
+        paths.LOCK_FILE.unlink(missing_ok=True)
+        job = read_job(job_id)
+        if job:
+            job["status"] = "cancelled"
+            job["message"] = "Cancelled by user"
+            _write_job(job)
+    except Exception as exc:
+        common.warn(f"abort cleanup failed: {exc}")
+    sys.exit(0)
+
+
+def read_job(job_id: str) -> dict[str, Any]:
+    """Read a job document from the jobs database."""
+    try:
+        with open(paths.JOBS / f"{job_id}.json", "r", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_job(job: dict[str, Any]) -> None:
+    """Atomically write a job document."""
+    paths.JOBS.mkdir(parents=True, exist_ok=True)
+    tmp = paths.JOBS / f"{job['id']}.json.tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(job, fh, ensure_ascii=False, indent=2)
+    os.replace(tmp, paths.JOBS / f"{job['id']}.json")
+
+
 def _next_job_dir(job_id: str) -> Path:
     out = paths.EXPORTS / job_id
     out.mkdir(parents=True, exist_ok=True)
@@ -304,6 +339,16 @@ def run(args: argparse.Namespace) -> int:
     job_id = paths.safe_id(args.job_id or datetime.now().strftime("job-%Y%m%d-%H%M%S"))
     job = Job(job_id, args.url or args.local_file or "", num_shorts)
     common.info(f"Job {job_id} started", url=args.url or args.local_file)
+
+    # Abort is signalled by removing this file's lock — the dashboard backend
+    # drops generate.lock and writes status='cancelled' to the job doc. The
+    # worker exits cleanly so the dashboard sees the real end state.
+    try:
+        import signal as _signal
+        _signal.signal(_signal.SIGTERM, _abort_handler)
+        _signal.signal(_signal.SIGINT, _abort_handler)
+    except Exception:
+        pass
 
     source: Path | None = None
     locked = False

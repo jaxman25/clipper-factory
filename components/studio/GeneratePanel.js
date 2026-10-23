@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { AlertCircle, Link2, Loader2, Sparkles } from 'lucide-react';
+import { AlertCircle, Link2, Loader2, Sparkles, XCircle, Square } from 'lucide-react';
 import { useStudio } from '@/components/studio/StudioProvider';
 
 function Progress({ job, onClear }) {
@@ -40,6 +40,17 @@ function Progress({ job, onClear }) {
         />
       </div>
 
+      {running && (
+        <button
+          type="button"
+          onClick={onCancel}
+          disabled={onCanceling}
+          className="btn btn-sm btn-danger"
+        >
+          {onCanceling ? 'Cancelling…' : 'Cancel Job'}
+        </button>
+      )}
+
       {job.error && <p className="mt-3 text-[11px] leading-relaxed text-red-400">{job.error}</p>}
     </div>
   );
@@ -50,6 +61,7 @@ export default function GeneratePanel({ autoFocus = false }) {
   const [url, setUrl] = useState('');
   const [num, setNum] = useState(config?.shorts_per_video || 10);
   const [busy, setBusy] = useState(false);
+  const [canceling, setCanceling] = useState(false);
   const running = job?.status === 'running';
 
   async function submit(event) {
@@ -67,6 +79,29 @@ export default function GeneratePanel({ autoFocus = false }) {
       notify(err.message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function cancelJob() {
+    if (!job?.id) return;
+    setCanceling(true);
+    try {
+      const response = await fetch('/api/jobs/abort', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: job.id }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || 'Cancel failed');
+      }
+      notify(`Job ${job.id} cancelled`);
+      setJob(null);
+      refresh();
+    } catch (err) {
+      notify(err.message);
+    } finally {
+      setCanceling(false);
     }
   }
 
@@ -125,7 +160,7 @@ export default function GeneratePanel({ autoFocus = false }) {
           </div>
         </form>
 
-        {job && <Progress job={job} onClear={() => setJob(null)} />}
+        {job && <Progress job={job} onClear={() => setJob(null)} onCancel={cancelJob} onCanceling={canceling} />}
 
         <p className="mt-4 text-[11px] text-zinc-500">
           {config?.shorts_per_video || 10} shorts per run · {config?.clip_min_seconds || 30}–
