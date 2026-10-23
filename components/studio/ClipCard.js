@@ -1,9 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { CalendarClock, Download, Loader2, Save, Send, Sparkles } from 'lucide-react';
+import { useStudio } from '@/components/studio/StudioProvider';
 import { dayKeyInTZ, formatInTZ, timeInTZ, zonedToIso } from '@/lib/time';
+import { cn } from '@/lib/cn';
 
-export default function ClipCard({ clip, timeZone, onRefresh, toast }) {
+export default function ClipCard({ clip }) {
+  const { timeZone, refresh, notify } = useStudio();
   const posted = clip.state === 'posted';
   const [caption, setCaption] = useState(clip.caption || '');
   const [date, setDate] = useState(dayKeyInTZ(clip.scheduled_for, timeZone));
@@ -29,7 +33,7 @@ export default function ClipCard({ clip, timeZone, onRefresh, toast }) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not save caption');
       setNote({ kind: 'ok', text: 'Caption saved' });
-      onRefresh?.();
+      refresh();
     } catch (err) {
       setNote({ kind: 'error', text: err.message });
     } finally {
@@ -53,8 +57,8 @@ export default function ClipCard({ clip, timeZone, onRefresh, toast }) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not reschedule');
       setNote({ kind: 'ok', text: 'Rescheduled' });
-      toast?.('Clip rescheduled');
-      onRefresh?.();
+      notify('Clip rescheduled');
+      refresh();
     } catch (err) {
       setNote({ kind: 'error', text: err.message });
     } finally {
@@ -67,20 +71,17 @@ export default function ClipCard({ clip, timeZone, onRefresh, toast }) {
     setBusy('post');
     setNote(null);
     try {
-      const response = await fetch(`/api/clips/${encodeURIComponent(clip.id)}/post`, {
-        method: 'POST',
-      });
+      const response = await fetch(`/api/clips/${encodeURIComponent(clip.id)}/post`, { method: 'POST' });
       const data = await response.json();
       if (response.status === 202 || data.pending) {
         setNote({ kind: 'ok', text: data.message || 'Posting in the background…' });
       } else if (!response.ok || !data.ok) {
-        const detail = data.result?.reason || data.error || 'Posting failed';
-        throw new Error(detail);
+        throw new Error(data.result?.reason || data.error || 'Posting failed');
       } else {
         setNote({ kind: 'ok', text: 'Posted successfully' });
-        toast?.('Posted to your platforms');
+        notify('Posted to your platforms');
       }
-      onRefresh?.();
+      refresh();
     } catch (err) {
       setNote({ kind: 'error', text: err.message });
     } finally {
@@ -100,7 +101,7 @@ export default function ClipCard({ clip, timeZone, onRefresh, toast }) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Telegram upload failed');
       setNote({ kind: 'ok', text: 'Sent to Telegram' });
-      toast?.('Clip sent to Telegram');
+      notify('Clip sent to Telegram');
     } catch (err) {
       setNote({ kind: 'error', text: err.message });
     } finally {
@@ -109,98 +110,134 @@ export default function ClipCard({ clip, timeZone, onRefresh, toast }) {
   }
 
   const platforms = Object.entries(clip.platforms || {})
-    .filter(([, value]) => value && value.ok)
+    .filter(([, value]) => value?.ok)
     .map(([key]) => key);
 
   return (
-    <article className="clip-card">
-      <div className="thumb-wrap">
+    <article className="card flex flex-col overflow-hidden">
+      <div className="relative bg-black">
         <video
           src={clip.media_url}
           poster={clip.thumb_url}
           controls
           playsInline
           preload="metadata"
+          className="aspect-[9/16] max-h-[360px] w-full object-cover"
         />
-        <span className={`badge ${posted ? 'posted' : ''}`}>
+        <span
+          className={cn(
+            'absolute left-3 top-3 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide backdrop-blur',
+            posted ? 'bg-emerald-500/15 text-emerald-300' : 'bg-black/60 text-white'
+          )}
+        >
           {clip.manual_required ? 'Needs manual' : posted ? 'Posted' : 'Queued'}
         </span>
-        <span className="badge score">🔥 {Math.round(clip.viral_score || 0)}</span>
+        <span className="absolute right-3 top-3 rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-bold text-[#FFD700] backdrop-blur">
+          🔥 {Math.round(clip.viral_score || 0)}
+        </span>
       </div>
 
-      <div className="clip-body">
-        <h3 className="clip-title">{clip.hook || clip.title || clip.id}</h3>
-        <div className="clip-meta">
-          <span className="pill">{Number(clip.duration || 0).toFixed(1)}s</span>
-          <span className="pill">{clip.face_detected ? 'face crop' : 'cinematic'}</span>
-          <span className="pill">{formatInTZ(clip.scheduled_for, timeZone)}</span>
-          {posted && platforms.length > 0 && <span className="pill">{platforms.join(' + ')}</span>}
+      <div className="flex flex-1 flex-col gap-3 p-4">
+        <div>
+          <h3 className="line-clamp-2 text-sm font-semibold leading-snug">
+            {clip.hook || clip.title || clip.id}
+          </h3>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <span className="pill">{Number(clip.duration || 0).toFixed(1)}s</span>
+            <span className="pill">
+              <Sparkles className="h-3 w-3 text-brand" />
+              {clip.face_detected ? 'face crop' : 'cinematic'}
+            </span>
+            <span className="pill">
+              <CalendarClock className="h-3 w-3" />
+              {formatInTZ(clip.scheduled_for, timeZone)}
+            </span>
+            {posted && platforms.length > 0 && <span className="pill">{platforms.join(' + ')}</span>}
+          </div>
         </div>
 
-        <div className="field">
-          <label htmlFor={`caption-${clip.id}`}>Caption</label>
+        <div>
+          <label htmlFor={`caption-${clip.id}`} className="label">
+            Caption
+          </label>
           <textarea
             id={`caption-${clip.id}`}
             value={caption}
-            rows={4}
+            rows={3}
             onChange={(event) => setCaption(event.target.value)}
             disabled={posted || busy === 'caption'}
+            className="input mt-1.5 resize-y text-[13px] leading-relaxed"
           />
         </div>
 
         {!posted && (
-          <div className="schedule-row">
-            <div className="field">
-              <label htmlFor={`date-${clip.id}`}>Date ({timeZone.split('/').pop()})</label>
+          <div className="grid grid-cols-[1fr_88px] gap-2">
+            <div>
+              <label htmlFor={`date-${clip.id}`} className="label">
+                Date ({timeZone.split('/').pop()})
+              </label>
               <input
                 id={`date-${clip.id}`}
                 type="date"
                 value={date}
                 onChange={(event) => setDate(event.target.value)}
+                className="input mt-1.5 px-2.5 py-2 text-xs"
               />
             </div>
-            <div className="field">
-              <label htmlFor={`time-${clip.id}`}>Time</label>
+            <div>
+              <label htmlFor={`time-${clip.id}`} className="label">
+                Time
+              </label>
               <input
                 id={`time-${clip.id}`}
                 type="time"
                 value={time}
                 onChange={(event) => setTime(event.target.value)}
+                className="input mt-1.5 px-2.5 py-2 text-xs"
               />
             </div>
             <button
               type="button"
-              className="btn btn-sm"
               onClick={reschedule}
               disabled={busy === 'schedule'}
+              className="btn btn-sm col-span-2"
             >
+              {busy === 'schedule' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
               {busy === 'schedule' ? 'Saving…' : 'Reschedule'}
             </button>
           </div>
         )}
 
-        <div className="actions">
+        <div className="mt-auto flex flex-wrap gap-2 pt-1">
           {!posted && (
             <>
-              <button type="button" className="btn btn-sm" onClick={saveCaption} disabled={busy === 'caption'}>
-                {busy === 'caption' ? 'Saving…' : 'Save caption'}
+              <button type="button" onClick={saveCaption} disabled={busy === 'caption'} className="btn btn-sm">
+                <Save className="h-3.5 w-3.5" />
+                {busy === 'caption' ? 'Saving…' : 'Save'}
               </button>
-              <button type="button" className="btn btn-primary btn-sm" onClick={postNow} disabled={busy === 'post'}>
-                {busy === 'post' ? 'Posting…' : 'Post Now'}
+              <button type="button" onClick={postNow} disabled={busy === 'post'} className="btn btn-primary btn-sm">
+                <Send className="h-3.5 w-3.5" />
+                {busy === 'post' ? 'Posting…' : 'Post now'}
               </button>
             </>
           )}
-          <button type="button" className="btn btn-sm" onClick={sendTelegram} disabled={busy === 'telegram'}>
-            {busy === 'telegram' ? 'Sending…' : 'Send to Telegram Now'}
+          <button type="button" onClick={sendTelegram} disabled={busy === 'telegram'} className="btn btn-sm">
+            <Send className="h-3.5 w-3.5 text-brand" />
+            {busy === 'telegram' ? 'Sending…' : 'Telegram'}
           </button>
-          <a className="btn btn-sm btn-ghost" href={clip.download_url}>
+          <a href={clip.download_url} className="btn btn-ghost btn-sm">
+            <Download className="h-3.5 w-3.5" />
             Download
           </a>
         </div>
 
-        {note && <p className={`note ${note.kind}`}>{note.text}</p>}
+        {note && (
+          <p className={cn('text-[11px]', note.kind === 'error' ? 'text-red-400' : 'text-emerald-400')}>
+            {note.text}
+          </p>
+        )}
         {!note && posted && clip.posted_at && (
-          <p className="note">Posted {formatInTZ(clip.posted_at, timeZone)}</p>
+          <p className="text-[11px] text-zinc-500">Posted {formatInTZ(clip.posted_at, timeZone)}</p>
         )}
       </div>
     </article>

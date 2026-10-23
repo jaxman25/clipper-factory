@@ -1,0 +1,119 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" fill="none">
+  <defs>
+    <linearGradient id="cf-blue" x1="200" y1="120" x2="830" y2="900" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2F80ED"/>
+      <stop offset="1" stop-color="#0F4CCF"/>
+    </linearGradient>
+
+    <!-- sprocket holes punched out of the film strip -->
+    <mask id="cf-holes" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#FFFFFF"/>
+      <g fill="#000000">
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(748.8 425.81) rotate(70)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(803.3 405.97) rotate(70)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(762.78 536.75) rotate(95.64)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(820.5 542.45) rotate(95.64)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(727.39 642.82) rotate(121.27)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(776.96 672.92) rotate(121.27)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(649.58 723.13) rotate(146.91)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(681.25 771.72) rotate(146.91)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(544.69 761.87) rotate(172.55)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(552.22 819.38) rotate(172.55)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(433.37 751.42) rotate(198.18)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(415.27 806.52) rotate(198.18)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(337.52 693.83) rotate(223.82)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(297.36 735.68) rotate(223.82)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(276.03 600.44) rotate(249.45)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(221.72 620.79) rotate(249.45)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(260.99 489.64) rotate(275.09)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(203.22 484.49) rotate(275.09)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(295.38 383.24) rotate(300.73)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(245.52 353.6) rotate(300.73)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(372.41 302.19) rotate(326.36)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(340.28 253.9) rotate(326.36)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(476.93 262.45) rotate(352)"/>
+        <rect x="-16" y="-11" width="32" height="22" rx="6" transform="translate(468.86 205.02) rotate(352)"/>
+      </g>
+    </mask>
+
+    <!-- one scissor half, mirrored below into a full pair -->
+    <g id="cf-scissor-half">
+      <g transform="rotate(-18)">
+        <path d="M-88 0L8 -11L8 11Z"/>
+      </g>
+      <g transform="rotate(39)">
+        <path d="M-2 -13L26 -11L30 0L26 11L-2 13Z"/>
+      </g>
+      <path fill-rule="evenodd" d="M58 29a22 22 0 1 0-44 0a22 22 0 1 0 44 0Zm-11 0a11 11 0 1 0-22 0a11 11 0 1 0 22 0Z"/>
+    </g>
+  </defs>
+
+  <g mask="url(#cf-holes)"><path d="M830.67 244.6
+        A416 416 0 0 1 844.19 261.59
+        L910.8 263.29
+        A470 470 0 0 1 937.79 313
+        L902.94 369.79
+        A416 416 0 0 1 915.63 411.29
+        L976.28 438.88
+        A470 470 0 0 1 981.7 495.19
+        L927.43 533.84
+        A416 416 0 0 1 922.89 577.01
+        L967.94 626.1
+        A470 470 0 0 1 950.93 680.05
+        L885.87 694.43
+        A416 416 0 0 1 864.83 732.38
+        L887.11 795.18
+        A470 470 0 0 1 850.37 838.19
+        L784.87 826.01
+        A416 416 0 0 1 750.67 852.73
+        L746.64 919.24
+        A470 470 0 0 1 696.02 944.48
+        L640.48 907.66
+        A416 416 0 0 1 598.56 918.89
+        L568.87 978.55
+        A470 470 0 0 1 512.41 982
+        L475.67 926.41
+        A416 416 0 0 1 432.69 920.37
+        L382.06 963.68
+        A470 470 0 0 1 328.73 944.8
+        L316.64 879.27
+        A416 416 0 0 1 279.44 856.92
+        L215.9 877
+        A470 470 0 0 1 174.2 838.78
+        L188.66 773.74
+        A416 416 0 0 1 163.15 738.63
+        L96.82 732.29
+        A470 470 0 0 1 73.36 680.82
+        L112.1 626.6
+        A416 416 0 0 1 102.33 584.31
+        L43.75 552.55
+        A470 470 0 0 1 42.27 496.01
+        L99.11 461.23
+        A416 416 0 0 1 106.65 418.49
+        L65.13 366.37
+        A470 470 0 0 1 85.86 313.74
+        L151.77 303.94
+        A416 416 0 0 1 175.41 267.54
+        L157.56 203.34
+        A470 470 0 0 1 197.2 163
+        L261.7 179.72
+        A416 416 0 0 1 297.68 155.46
+        L306.33 89.39
+        A470 470 0 0 1 358.6 67.74
+        L411.43 108.34
+        A416 416 0 0 1 454.03 100.06
+        L487.81 42.62
+        A470 470 0 0 1 544.38 43.12
+        L577.15 101.13
+        A416 416 0 0 1 598.49 105.09
+        L588.1 154
+        A366 366 0 1 0 792.37 276.74
+        Z" fill="url(#cf-blue)"/><path d="M776.77 305.14A336 336 0 1 1 581.86 183.34L558.99 290.94A226 226 0 1 0 690.09 372.86Z" fill="url(#cf-blue)"/></g>
+  <g transform="translate(825.63 352.2) rotate(-27)">
+      <g fill="#FFFFFF">
+        <use href="#cf-scissor-half"/>
+        <use href="#cf-scissor-half" transform="scale(1,-1)"/>
+      </g>
+      <circle r="10" fill="#0F4CCF"/>
+    </g>
+</svg>

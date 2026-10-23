@@ -1,0 +1,75 @@
+import { cn } from '@/lib/cn';
+
+export function PageHeader({ eyebrow, title, description, actions }) {
+  return (
+    <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
+      <div className="min-w-0">
+        {eyebrow && <p className="label text-brand">{eyebrow}</p>}
+        <h1 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">{title}</h1>
+        {description && <p className="mt-2 max-w-2xl text-sm leading-relaxed text-muted">{description}</p>}
+      </div>
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+    </div>
+  );
+}
+
+export function StatCard({ label, value, hint, icon: Icon, tone = 'default' }) {
+  return (
+    <div className="card p-4 sm:p-5">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-zinc-500">{label}</p>
+        {Icon && (
+          <Icon
+            className={cn('h-4 w-4', tone === 'brand' ? 'text-brand' : 'text-zinc-600')}
+            aria-hidden="true"
+          />
+        )}
+      </div>
+      <p className="mt-3 text-2xl font-semibold tracking-tight">{value}</p>
+      {hint && <p className="mt-1 text-[11px] text-zinc-500">{hint}</p>}
+    </div>
+  );
+}
+
+export function SectionCard({ title, description, actions, children, className }) {
+  return (
+    <section className={cn('card', className)}>
+      {(title || actions) && (
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/5 px-5 py-4 sm:px-6">
+          <div>
+            {title && <h2 className="text-sm font-semibold tracking-tight">{title}</h2>}
+            {description && <p className="mt-1 text-xs text-muted">{description}</p>}
+          </div>
+          {actions && <div className="flex items-center gap-2">{actions}</div>}
+        </div>
+      )}
+      <div className="p-5 sm:p-6">{children}</div>
+    </section>
+  );
+}
+
+export function EmptyState({ icon: Icon, title, description, action }) {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-white/10 px-6 py-14 text-center">
+      {Icon && (
+        <span className="mb-4 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/[0.04] text-zinc-500">
+          <Icon className="h-5 w-5" />
+        </span>
+      )}
+      <h3 className="text-sm font-semibold text-white">{title}</h3>
+      {description && <p className="mt-1.5 max-w-sm text-[13px] leading-relaxed text-muted">{description}</p>}
+      {action && <div className="mt-5">{action}</div>}
+    </div>
+  );
+}
+
+export function Skeleton({ className }) {
+  return (
+    <div
+      className={cn(
+        'animate-shimmer rounded-xl border border-white/5 bg-[linear-gradient(90deg,#121214,#1a1a1d,#121214)] bg-[length:200%_100%]',
+        className
+      )}
+    />
+  );
+}

@@ -1,6 +1,8 @@
-# African Clipper Factory — Render deployment guide
+# Clipper Factory — Render deployment guide
 
-Paste one YouTube link → get 10 vertical African-tales shorts → two auto-post per day at
+![Clipper Factory logo](assets/logos/icon-512.png)
+
+Paste one YouTube link → get 10 vertical shorts → two auto-post per day at
 **19:00 and 21:00 EAT** to Instagram Reels and TikTok.
 
 This document covers deployment on Render's **free** plan, every token you need, and the
@@ -16,7 +18,7 @@ trade-offs that come with a 512 MB / ephemeral-disk host.
 | `backend/viral.py` | Scores 30–45 s windows on story keywords, questions, delivery density and volume spikes |
 | `backend/renderer.py` | 9:16 reframe (MediaPipe face centring), drum bed, ASS caption burn-in, thumbnails |
 | `backend/captions.py` | Word-pop captions, hook (0–2 s) and outro (last 2 s) |
-| `backend/broll.py` | Pexels B-roll for face-less fallbacks |
+| `backend/broll.py` | Pixabay B-roll for face-less fallbacks |
 | `scheduler/scheduler.py` | APScheduler posting loop **and** `--run-once` mode for cron |
 | `telegram_bot/bot.py` | `/start /clip /queue /postnow /settings /cancel`, raw-link handling, optional in-process scheduler |
 | `auto-post/instagram.js` | Meta Graph API Reels upload |
@@ -56,7 +58,7 @@ Generated media lives under `ACF_DATA_ROOT` (`/tmp` on Render):
 
 1. Push this repository to GitHub.
 2. Render dashboard → **New → Blueprint** → select the repository.
-3. Render reads `render.yaml` and shows one **web service** (`african-clipper-factory`, Free plan, Docker).
+3. Render reads `render.yaml` and shows one **web service** (`clipper-factory`, Free plan, Docker).
 4. Fill the `sync: false` secrets (section 4). Only Telegram is strictly required to boot; Instagram/TikTok can be added later.
 5. Click **Apply**. The first Docker build installs Node 18, Python, ffmpeg, Chromium and the AI wheels — expect **8–15 minutes**, and a **512 MB build may be tight**. If the build is OOM-killed, retry once; Render's builders occasionally get more headroom. Upgrading temporarily is the only guaranteed fix.
 6. When the service is live, open `/api/health`. You should see:
@@ -65,7 +67,8 @@ Generated media lives under `ACF_DATA_ROOT` (`/tmp` on Render):
 { "status": "ok", "queue": 0, "time": "2026-10-22T08:00:00.000Z", "timezone": "Africa/Nairobi" }
 ```
 
-7. Open the dashboard at `/`. If you set `DASHBOARD_USER`/`DASHBOARD_PASSWORD`, the browser asks for them.
+7. Open `/` for the landing page and `/dashboard` for the app (the old `/settings` URL redirects to
+   `/dashboard/settings`). If you set `DASHBOARD_USER`/`DASHBOARD_PASSWORD`, the browser asks for them.
 
 ### Environment variables
 
@@ -73,7 +76,7 @@ Generated media lives under `ACF_DATA_ROOT` (`/tmp` on Render):
 | --- | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | yes | BotFather token |
 | `TELEGRAM_CHAT_ID` | yes | Where confirmations and alerts go |
-| `PEXELS_API_KEY` | optional | Free B-roll for face-less clips |
+| `PIXABAY_API_KEY` | optional | Free B-roll for face-less clips |
 | `IG_USER_ID`, `IG_ACCESS_TOKEN` | optional | Instagram Reels publishing |
 | `TIKTOK_AUTH_B64` | optional | Base64 of a Playwright `auth.json` |
 | `PUBLIC_BASE_URL` | optional | Public origin for IG's video fetch; defaults to `RENDER_EXTERNAL_URL` |
@@ -83,7 +86,7 @@ Generated media lives under `ACF_DATA_ROOT` (`/tmp` on Render):
 | `DASHBOARD_USER`, `DASHBOARD_PASSWORD` | optional | HTTP Basic protection for the dashboard |
 | `IG_GRAPH_VERSION` | optional | Defaults to `v21.0` |
 
-`TELEGRAM_*`, `PEXELS_API_KEY`, `IG_*` and `TIKTOK_AUTH_B64` can also be entered on the dashboard's
+`TELEGRAM_*`, `PIXABAY_API_KEY`, `IG_*` and `TIKTOK_AUTH_B64` can also be entered on the dashboard's
 **Settings** page. They are stored in `/tmp/state/settings.json` for immediate use, but Render env
 vars always win and are the only permanent option.
 
@@ -219,7 +222,7 @@ post twice in one day.
 ```bash
 bash setup.sh                       # node/python deps, ffmpeg, Chromium, assets, .env
 # edit .env
-npm run dev                         # dashboard on http://localhost:3000
+npm run dev                         # landing on http://localhost:3000, app on /dashboard
 python3 telegram_bot/bot.py         # bot (separate terminal)
 
 # renderer smoke test, no network required:
@@ -257,7 +260,7 @@ written to `state/settings.json` and override it.
 5. **Trim** — the cut starts at the first spoken word and ends 0.3 s after the last, so leading and
    trailing silence disappear without desyncing the video.
 6. **Reframe** — MediaPipe samples four frames; the crop follows the median face centre. No face
-   → blurred fill + centred footage + dark gradient + cached Pexels B-roll.
+   → blurred fill + centred footage + dark gradient + cached Pixabay B-roll.
 7. **Audio** — 1.1× `atempo`/`setpts` (in sync), drum loop at −22 dB, ambience at −30 dB, limiter.
 8. **Captions** — ASS word cards (2–3 words), yellow `#FFD700`, black stroke, scale pop, hook at
    0–2 s, outro for the final 2 s.

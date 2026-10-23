@@ -1,8 +1,8 @@
 {
-  "name": "african-clipper-factory",
+  "name": "clipper-factory",
   "version": "1.0.0",
   "private": true,
-  "description": "Automatic African Tales clip factory: YouTube in, scheduled shorts out.",
+  "description": "Clipper Factory: YouTube in, scheduled vertical shorts out.",
   "scripts": {
     "dev": "next dev -p 3000",
     "build": "next build",
@@ -10,15 +10,23 @@
     "start:render": "python3 telegram_bot/bot.py & npm run start",
     "lint": "next lint",
     "assets": "node scripts/run-python.mjs scripts/make_assets.py",
+    "logos": "node scripts/build-logos.mjs",
     "smoke": "node scripts/run-python.mjs scripts/smoke_render.py"
   },
   "dependencies": {
     "archiver": "^7.0.1",
+    "lucide-react": "^1.61.0",
     "next": "^14.2.35",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.6.1",
+    "postcss": "^8.5.31",
+    "sharp": "^0.35.5",
+    "tailwindcss": "^3.4.17"
   }
 }
