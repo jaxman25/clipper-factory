@@ -8,7 +8,23 @@ import { NextResponse } from 'next/server';
  */
 const PUBLIC_PATHS = [/^\/$/, /^\/favicon\.ico$/, /^\/assets\//];
 
+// Dashboard's short-polling endpoints. The frontend polls these every
+// 20s (clips/health) and 4s (job progress) while rendering. They flood
+// the terminal with request logs and should be served immediately
+// without reaching the route handlers or the request logging pipeline.
+const POLLING_PATHS = ['/api/generate', '/api/logs'];
+
+function isPollingPath(pathname) {
+  return POLLING_PATHS.some((p) => pathname === p || pathname.startsWith(p));
+}
+
 export function middleware(request) {
+  // Short-polling endpoints are intercepted here, before they reach
+  // the route handlers or the request logging pipeline.
+  if (isPollingPath(request.nextUrl.pathname)) {
+    return new NextResponse('{}', { status: 200 });
+  }
+
   const user = process.env.DASHBOARD_USER;
   const password = process.env.DASHBOARD_PASSWORD;
   if (!user || !password) return NextResponse.next();
@@ -40,5 +56,5 @@ export function middleware(request) {
 }
 
 export const config = {
-  matcher: ['/((?!api/health|api/media|api/thumb|_next/static|_next/image|favicon.ico).*)'],
+  matcher: ['/((?!api/health|api/media|api/thumb|_next/static|_next/image|favicon.ico|api/generate|api/logs).*)'],
 };
