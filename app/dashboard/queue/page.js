@@ -10,7 +10,7 @@ import { useStudio } from '@/components/studio/StudioProvider';
 import { cn } from '@/lib/cn';
 
 export default function QueuePage() {
-  const { clips, posted, loading, refresh } = useStudio();
+  const { clips, posted, loading, refresh, notify } = useStudio();
   const [tab, setTab] = useState('queue');
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
