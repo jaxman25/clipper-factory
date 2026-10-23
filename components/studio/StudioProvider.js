@@ -52,9 +52,18 @@ export function StudioProvider({ children }) {
       const payload = await response.json();
       const list = payload.jobs || [];
       setJobs(list);
+
+      // If the last known job was aborted, drop it. The abort endpoint
+      // deletes the stale job doc, so a missing job in the list means the
+      // abort was processed. This prevents the auto-polling from
+      // re-triggering a phantom "running" job.
       setJob((current) => {
         if (current?.id) {
-          return list.find((entry) => entry.id === current.id) || current;
+          const currentJob = list.find((entry) => entry.id === current.id);
+          if (!currentJob) {
+            return null;
+          }
+          return currentJob;
         }
         return list.find((entry) => entry.status === 'running') || null;
       });
@@ -166,8 +175,6 @@ export function StudioProvider({ children }) {
       startGeneration,
       reschedule,
       notify,
-      mode,
-      setMode,
       mode,
       setMode,
     }),
