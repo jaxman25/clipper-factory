@@ -100,13 +100,42 @@ def _fonts_dir() -> Path | None:
 
 
 def detect_face_center(video: Path, start: float, end: float) -> tuple[float, float] | None:
-    """Median face centre (x, y as 0..1 fractions) across sampled frames."""
+    """Median face centre (x, y as 0..1 fractions) across sampled frames.
+
+    Uses the modern mediapipe.tasks API (FaceLandmarker in VIDEO mode), which
+    is the only app-level task available in mediapipe >= 0.10 that exposes a
+    2D bounding box (location_data.relative_bounding_box). Returns the same
+    (x, y) 0..1 fractions the old mp.solutions.face_detection did, so the
+    rest of the renderer needs no changes.
+    """
     try:
-        import cv2  # type: ignore
-        import mediapipe as mp  # type: ignore
+        import mediapipe as mp
+        from mediapipe.tasks import python
+        from mediapipe.tasks.python import vision
     except Exception as exc:  # dependency missing / unsupported platform
         common.info(f"face detection unavailable ({exc}); using cinematic fallback")
         return None
+
+    model_path = _ensure_face_model()
+    if not model_path:
+        common.info("face model unavailable; using cinematic fallback")
+        return None
+
+    landmarker = None
+    try:
+        options = vision.FaceLandmarkerOptions(
+            base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
+            running_mode=python.RunnerOptions.RUNNING_MODE_VIDEO,
+            num_faces=1,
+            min_face_detection_confidence=0.4,
+            min_tracking_confidence=0.5,
+        )
+        landmarker = vision.FaceLandmarker.create_from_options(options)
+    except Exception as exc:
+        common.info(f"face landmarker unavailable ({exc}); using cinematic fallback")
+        return None
+
+    import cv2
 
     cap = cv2.VideoCapture(str(video))
     if not cap.isOpened():
@@ -116,32 +145,32 @@ def detect_face_center(video: Path, start: float, end: float) -> tuple[float, fl
     ys: list[float] = []
     try:
         fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
-        with mp.solutions.face_detection.FaceDetection(
-            model_selection=1, min_detection_confidence=0.4
-        ) as detector:
-            span = max(0.5, end - start)
-            for fraction in (0.08, 0.3, 0.55, 0.8):
-                frame_index = int((start + span * fraction) * fps)
-                cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, frame_index))
-                ok, frame = cap.read()
-                if not ok or frame is None:
-                    continue
-                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                results = detector.process(rgb)
-                if not results.detections:
-                    continue
-                box = results.detections[0].location_data.relative_bounding_box
-                xs.append(box.xmin + box.width / 2)
-                ys.append(box.ymin + box.height / 2)
+        span = max(0.5, end - start)
+        for fraction in (0.08, 0.3, 0.55, 0.8):
+            frame_index = int((start + span * fraction) * fps)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, max(0, frame_index))
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                continue
+
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+            result = landmarker.detect(mp_image)
+            if not result.detections:
+                continue
+            box = result.detections[0].location_data.relative_bounding_box
+            xs.append(box.xmin + box.width / 2)
+            ys.append(box.ymin + box.height / 2)
     finally:
         cap.release()
+        if landmarker:
+            landmarker.close()
 
     if not xs:
         return None
     xs.sort()
     ys.sort()
     return (xs[len(xs) // 2], ys[len(ys) // 2])
-
 
 def _crop_geometry(width: int, height: int, face: tuple[float, float] | None) -> tuple[int, int, int, int]:
     """Return crop w, h, x, y that produce the closest 9:16 window."""
