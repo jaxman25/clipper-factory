@@ -66,6 +66,10 @@
     @apply border-transparent bg-transparent text-muted hover:bg-white/[0.06] hover:text-white;
   }
 
+  .btn-danger {
+    @apply border-transparent bg-red-500/15 text-red-300 hover:bg-red-500/25;
+  }
+
   .btn-sm {
     @apply gap-1.5 px-3 py-1.5 text-xs;
   }
