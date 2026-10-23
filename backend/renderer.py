@@ -172,6 +172,39 @@ def detect_face_center(video: Path, start: float, end: float) -> tuple[float, fl
     ys.sort()
     return (xs[len(xs) // 2], ys[len(ys) // 2])
 
+
+def _ensure_face_model() -> Path:
+    """Locate or download face_landmarker.task in assets/face_models/."""
+    asset_root = os.getenv("ACF_FACE_MODEL_DIR") or os.path.join(os.path.dirname(__file__), "..", "assets", "face_models")
+    asset_root = Path(asset_root).expanduser().resolve()
+    asset_root.mkdir(parents=True, exist_ok=True)
+    model_path = asset_root / "face_landmarker.task"
+
+    if model_path.exists():
+        return model_path
+
+    try:
+        import requests
+    except ImportError:
+        common.warn("requests missing - cannot fetch the face landmarker model; using cinematic fallback")
+        return model_path
+
+    url = (
+        "https://storage.googleapis.com/mediapipe-models/face_landmark/face_landmarker/"
+        "float16/1/face_landmarker.task"
+    )
+    common.info(f"Downloading face_landmarker model from {url}")
+    try:
+        response = requests.get(url, timeout=60)
+        response.raise_for_status()
+        model_path.write_bytes(response.content)
+        common.info(f"face_landmarker model cached: {model_path}")
+        return model_path
+    except Exception as exc:
+        common.warn(f"Could not download face_landmarker model ({exc}); using cinematic fallback")
+        return model_path
+
+
 def _crop_geometry(width: int, height: int, face: tuple[float, float] | None) -> tuple[int, int, int, int]:
     """Return crop w, h, x, y that produce the closest 9:16 window."""
     ratio = 9 / 16
