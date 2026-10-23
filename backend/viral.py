@@ -295,18 +295,22 @@ def fallback_windows(
     min_seconds: float = 30.0,
     max_seconds: float = 45.0,
 ) -> list[Candidate]:
-    """Evenly spaced windows used when the transcript is unusable."""
+    """Evenly spaced windows used when the transcript is unusable.
+
+    Distributes ``count`` windows across the full source duration so a long
+    video actually yields the requested number of shorts instead of a single
+    stacked block of max-length clips.
+    """
     if duration <= 5:
         return []
-    length = max(min_seconds, min(max_seconds, duration))
-    length = min(length, max(8.0, duration))
     slots = max(1, count)
-    step = max(length + 1.0, (duration - length) / slots)
+    # Slide the windows across the whole source: each clip starts at i * step.
+    step = max(max_seconds, (duration - min_seconds) / slots)
     out: list[Candidate] = []
     for i in range(slots):
-        start = min(i * step, max(0.0, duration - length))
-        end = min(duration, start + length)
-        if end - start < min(8.0, duration):
+        start = min(i * step, max(0.0, duration - min_seconds))
+        end = min(duration, start + min_seconds)
+        if end - start < min_seconds:
             continue
         out.append(
             Candidate(

@@ -122,7 +122,7 @@ export default function ClipCard({ clip }) {
           controls
           playsInline
           preload="metadata"
-          className="aspect-[9/16] max-h-[360px] w-full object-cover"
+          className="aspect-[9/16] max-h-[360px] w-full object-contain"
         />
         <span
           className={cn(
