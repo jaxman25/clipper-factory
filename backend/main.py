@@ -512,54 +512,95 @@ def run(args: argparse.Namespace) -> int:
             clip_path = job_dir / f"{clip_id}.mp4"
             thumb_path = job_dir / f"{clip_id}.jpg"
 
-            render_meta = renderer.render_clip(
-                source,
-                clip_path,
-                clip_start,
-                clip_end,
-                words,
-                cfg,
-                hook=hook,
-                transcript=transcript,
-                broll=broll_path,
-                thumb_path=thumb_path,
-                info=info,
-            )
+            # Load the highlight keywords list from config (defaults to
+            # DEFAULT_HIGHLIGHT_WORDS in captions.py when not configured).
+            highlight_words = cfg.get("highlight_words", captions.DEFAULT_HIGHLIGHT_WORDS)
 
-            scheduled = slots[index - 1] if index - 1 < len(slots) else scheduling.next_slot(cfg)
-            item = {
-                "id": clip_id,
-                "job_id": job_id,
-                "source_url": args.url or str(source),
-                "source_title": title,
-                "title": title,
-                "hook": hook,
-                "caption": viral.social_caption(candidate, hashtags) if mode == "viral" else transcript,
-                "transcript": transcript,
-                "viral_score": round(candidate.score, 1) if mode == "viral" else None,
-                "reasons": candidate.reasons if mode == "viral" else [],
-                "start": clip_start,
-                "end": clip_end,
-                "duration": render_meta["duration"],
-                "width": render_meta["width"],
-                "height": render_meta["height"],
-                "face_detected": render_meta["face_detected"],
-                "file": f"{clip_id}.mp4",
-                "thumb": f"{clip_id}.jpg",
-                "export_path": str(clip_path),
-                "scheduled_for": scheduling.to_iso(scheduled),
-                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                "posted_at": None,
-                "platforms": {},
-                "mode": mode,
-            }
-            if thumb_path.exists():
-                shutil.copy2(thumb_path, paths.QUEUE / thumb_path.name)
-            shutil.copy2(clip_path, paths.QUEUE / f"{clip_id}.mp4")
-            common.write_json(paths.QUEUE / f"{clip_id}.json", item)
-            queue_items.append(item)
+            if mode == "equal":
+                # Equal mode: no transcript, no captions, no hook text.
+                # Just cut the vertical segment and let the renderer handle
+                # the cinematic fallback.
+                clip_start = round(candidate.start, 3)
+                clip_end = round(candidate.end, 3)
+                job.update(
+                    stage="render",
+                    progress=base_pct,
+                    message=f"Rendering equal slice {index}/{len(selected)}",
+                )
+                render_meta = renderer.render_clip(
+                    source,
+                    clip_path,
+                    clip_start,
+                    clip_end,
+                    words,
+                    cfg,
+                    hook=hook,
+                    transcript=transcript,
+                    broll=broll_path,
+                    thumb_path=thumb_path,
+                    info=info,
+                    highlight_words=highlight_words,
+                )
+            else:
+                clip_start, clip_end = _trim_to_words(candidate, duration)
+                words = _relative_words(candidate, clip_start)
+                hook = viral.hook_text(candidate)
+                transcript = candidate.text.strip()
+                title = hook.title() if hook else f"African Tale #{index}"
+                job.update(
+                    stage="render",
+                    progress=base_pct,
+                    message=f"Rendering clip {index}/{len(selected)} (score {candidate.score:.0f})",
+                )
+                render_meta = renderer.render_clip(
+                    source,
+                    clip_path,
+                    clip_start,
+                    clip_end,
+                    words,
+                    cfg,
+                    hook=hook,
+                    transcript=transcript,
+                    broll=broll_path,
+                    thumb_path=thumb_path,
+                    info=info,
+                    highlight_words=highlight_words,
+                )
 
-            # Free disk on /tmp: drop the source once it is no longer needed.
+        scheduled = slots[index - 1] if index - 1 < len(slots) else scheduling.next_slot(cfg)
+        item = {
+            "id": clip_id,
+            "job_id": job_id,
+            "source_url": args.url or str(source),
+            "source_title": title,
+            "title": title,
+            "hook": hook,
+            "caption": viral.social_caption(candidate, hashtags) if mode == "viral" else transcript,
+            "transcript": transcript,
+            "viral_score": round(candidate.score, 1) if mode == "viral" else None,
+            "reasons": candidate.reasons if mode == "viral" else [],
+            "start": clip_start,
+            "end": clip_end,
+            "duration": render_meta["duration"],
+            "width": render_meta["width"],
+            "height": render_meta["height"],
+            "face_detected": render_meta["face_detected"],
+            "file": f"{clip_id}.mp4",
+            "thumb": f"{clip_id}.jpg",
+            "export_path": str(clip_path),
+            "scheduled_for": scheduling.to_iso(scheduled),
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "posted_at": None,
+            "platforms": {},
+            "mode": mode,
+        }
+        if thumb_path.exists():
+            shutil.copy2(thumb_path, paths.QUEUE / thumb_path.name)
+        shutil.copy2(clip_path, paths.QUEUE / f"{clip_id}.mp4")
+        common.write_json(paths.QUEUE / f"{clip_id}.json", item)
+        queue_items.append(item)
+
+        # Free disk on /tmp: drop the source once it is no longer needed.
         manifest = {
             "job_id": job_id,
             "source_url": args.url or str(source),

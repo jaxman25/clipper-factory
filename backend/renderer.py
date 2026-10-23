@@ -312,6 +312,7 @@ def render_clip(
         outro_seconds=float(cfg.get("outro_seconds", 2) or 2),
         transcript=transcript,
         label=label,
+        highlight_words=cfg.get("highlight_words", captions.DEFAULT_HIGHLIGHT_WORDS),
     )
     ass_path.write_text(ass_doc, encoding="utf-8")
 
