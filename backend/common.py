@@ -27,7 +27,7 @@ except ImportError:  # pragma: no cover
 TOKEN_KEYS = (
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHAT_ID",
-    "PEXELS_API_KEY",
+    "PIXABAY_API_KEY",
     "IG_USER_ID",
     "IG_ACCESS_TOKEN",
     "TIKTOK_AUTH_B64",

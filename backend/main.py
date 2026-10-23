@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""African Clipper Factory - clip generator.
+"""Clipper Factory - clip generator.
 
     python3 backend/main.py --url "https://youtu.be/XXXX" --num-shorts 10
 
@@ -363,10 +363,10 @@ def run(args: argparse.Namespace) -> int:
         )
 
         broll_path = None
-        if os.getenv("PEXELS_API_KEY", "").strip():
+        if os.getenv("PIXABAY_API_KEY", "").strip():
             broll_path = broll_mod.fetch()
             if broll_path:
-                job.update(message="Pexels B-roll cached for face-less fallbacks")
+                job.update(message="Pixabay B-roll cached for face-less fallbacks")
 
         job_dir = _next_job_dir(job_id)
         queue_items: list[dict[str, Any]] = []

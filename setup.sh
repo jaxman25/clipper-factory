@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# African Clipper Factory - one-shot local setup.
+# Clipper Factory - one-shot local setup.
 # Works on Debian/Ubuntu (incl. the Render Docker image) and macOS.
 set -euo pipefail
 
@@ -80,7 +80,7 @@ python3 scripts/make_assets.py || log "Asset generation failed - renderer will s
 # ---------------------------------------------------------------- config files
 if [ ! -f .env ]; then
   cp .env.example .env
-  log "Created .env from .env.example - add TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID and PEXELS_API_KEY."
+  log "Created .env from .env.example - add TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID and PIXABAY_API_KEY."
 else
   log ".env already exists - left untouched."
 fi

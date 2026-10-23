@@ -7,10 +7,11 @@ Pipeline per clip
 2. Reframe to 1080x1920:
    * face detected -> smart crop centred on the speaker's face
    * no face       -> cinematic fallback: blurred fill, centred footage,
-                      dark gradient card and optional Pexels B-roll bed
+                      dark gradient card and optional Pixabay B-roll bed
 3. Mix the drum loop at -22 dB (plus optional night ambience at -30 dB).
 4. Burn word-pop captions, hook (0-2 s) and outro (last 2 s) from ASS.
-5. Encode H.264/AAC, 1080x1920, faststart, plus a JPEG thumbnail.
+5. Stamp the white brand watermark in the bottom-right corner.
+6. Encode H.264/AAC, 1080x1920, faststart, plus a JPEG thumbnail.
 """
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ except ImportError:  # pragma: no cover
     import paths  # type: ignore
 
 TARGET_W, TARGET_H = 1080, 1920
+WATERMARK_MARGIN = 52  # px from the bottom/right edge
 
 
 class RenderError(RuntimeError):
@@ -274,6 +276,9 @@ def render_clip(
         add_input("grad", ["-loop", "1", "-i", str(gradient)])
     if broll:
         add_input("broll", ["-stream_loop", "-1", "-i", str(broll)])
+    watermark = paths.WATERMARK if paths.WATERMARK.exists() else None
+    if watermark:
+        add_input("wm", ["-loop", "1", "-i", str(watermark)])
     if not info.get("has_audio"):
         add_input(
             "silence",
@@ -334,7 +339,17 @@ def render_clip(
     ass_filter = f"ass=filename='{_filter_path(ass_path)}'"
     if fonts:
         ass_filter += f":fontsdir='{_filter_path(fonts)}'"
-    filters.append(f"[base]{ass_filter}[vout]")
+    filters.append(f"[base]{ass_filter}[captioned]")
+
+    video_out = "captioned"
+    if watermark:
+        # 100x100 PNG that already carries its own 50% alpha.
+        filters.append(f"[{index['wm']}:v]format=rgba[wmlogo]")
+        filters.append(
+            f"[captioned][wmlogo]overlay="
+            f"{TARGET_W}-w-{WATERMARK_MARGIN}:{TARGET_H}-h-{WATERMARK_MARGIN}:format=auto[branded]"
+        )
+        video_out = "branded"
 
     mix_inputs: list[str] = []
     if info.get("has_audio"):
@@ -381,7 +396,7 @@ def render_clip(
         args.extend(segment)
     args.extend(["-filter_complex", ";".join(filters)])
     args.extend([
-        "-map", "[vout]", "-map", "[aout]",
+        "-map", f"[{video_out}]", "-map", "[aout]",
         "-c:v", "libx264", "-preset", "veryfast", "-crf", "21",
         "-profile:v", "high", "-level", "4.1", "-pix_fmt", "yuv420p",
         "-r", "30", "-g", "60",

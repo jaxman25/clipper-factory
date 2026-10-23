@@ -29,6 +29,7 @@ DRUM_LOOP = ASSETS / "drum_loop.wav"
 NIGHT_AMBIENCE = ASSETS / "night_ambience.wav"
 GRADIENT = ASSETS / "gradient.png"
 BROLL_DIR = ASSETS / "broll"
+WATERMARK = ASSETS / "logos" / "watermark-100.png"
 
 CONFIG_FILE = ROOT / "config.json"
 SETTINGS_FILE = STATE / "settings.json"

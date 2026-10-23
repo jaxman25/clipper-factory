@@ -1,4 +1,4 @@
-# Render Blueprint for the African Clipper Factory.
+# Render Blueprint for Clipper Factory.
 #
 # The web service below is 100% free: Docker, /api/health check, and the
 # 19:00/21:00 EAT poster runs inside the bot process (ACF_ENABLE_SCHEDULER=1).
@@ -8,7 +8,7 @@
 # the leading "#" from the two cron blocks and set the two secrets.
 services:
   - type: web
-    name: african-clipper-factory
+    name: clipper-factory
     runtime: docker
     plan: free
     region: oregon
@@ -31,7 +31,7 @@ services:
         sync: false
       - key: TELEGRAM_CHAT_ID
         sync: false
-      - key: PEXELS_API_KEY
+      - key: PIXABAY_API_KEY
         sync: false
       - key: IG_USER_ID
         sync: false
