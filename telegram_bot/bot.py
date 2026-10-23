@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Telegram control bot for the African Clipper Factory.
+"""Telegram control bot for Clipper Factory.
 
 Commands
 --------
@@ -42,7 +42,7 @@ from telegram.ext import (  # noqa: E402
     filters,
 )
 
-from backend import common, paths, scheduling, telegram as tg  # noqa: E402
+from backend import common, paths, scheduling  # noqa: E402
 
 PYTHON_BIN = os.getenv("PYTHON_BIN", sys.executable or "python3")
 URL_RE = re.compile(r"https?://\S+")
@@ -239,7 +239,7 @@ async def watch_generation(app, chat_id: int, job_id: str, proc, message_id: int
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = chat_target(update)
     text = (
-        "🌍 *African Clipper Factory*\n"
+        "🌍 *Clipper Factory*\n"
         "Paste a YouTube link and I turn the best story beats into 10 vertical shorts, "
         "then post two a day at 19:00 and 21:00 EAT.\n\n"
         "*Commands*\n"
@@ -318,7 +318,7 @@ async def cmd_settings(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     tokens = {
         "Telegram bot": bool(os.getenv("TELEGRAM_BOT_TOKEN")),
         "Telegram chat": bool(os.getenv("TELEGRAM_CHAT_ID")),
-        "Pexels": bool(os.getenv("PEXELS_API_KEY")),
+        "Pixabay": bool(os.getenv("PIXABAY_API_KEY")),
         "Instagram": bool(os.getenv("IG_USER_ID") and os.getenv("IG_ACCESS_TOKEN")),
         "TikTok session": bool(
             os.getenv("TIKTOK_AUTH_B64")
@@ -388,6 +388,21 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
             pass
 
 
+def startup_chat_id() -> str:
+    """TELEGRAM_CHAT_ID from the env (or dashboard settings), trimmed.
+
+    Values saved in the dashboard sometimes arrive quoted or padded, and a
+    malformed id makes Telegram answer 400 "chat not found".
+    """
+    raw = os.getenv("TELEGRAM_CHAT_ID", "")
+    return raw.strip().strip('"').strip("'")
+
+
+def chat_id_valid(chat: str) -> bool:
+    """True for a numeric id (optionally negative) or a @username."""
+    return bool(re.fullmatch(r"-?\d+|@[A-Za-z][A-Za-z0-9_]{4,}", chat))
+
+
 async def post_init(app: Application) -> None:
     try:
         await app.bot.set_my_commands([
@@ -400,8 +415,26 @@ async def post_init(app: Application) -> None:
         ])
     except TelegramError as exc:
         common.warn(f"Could not register commands: {exc}")
-    if not queue_items():
-        await tg.send_message("📭 Queue empty! Add videos via /clip")
+    if queue_items():
+        return
+    chat = startup_chat_id()
+    if not chat:
+        common.warn("Startup notice skipped: TELEGRAM_CHAT_ID is missing")
+        return
+    if not chat_id_valid(chat):
+        common.warn(
+            f"Startup notice skipped: TELEGRAM_CHAT_ID {chat!r} is not a chat id "
+            "(use the id @start returns, digits only)"
+        )
+        return
+    try:
+        # application.bot in post_init - never the backend.telegram helper,
+        # whose send_message is sync and returns bool (not awaitable).
+        await app.bot.send_message(
+            chat_id=chat, text="📭 Queue empty! Add videos via /clip"
+        )
+    except TelegramError as exc:
+        common.warn(f"Could not send startup notice: {exc}")
 
 
 def main() -> int:
