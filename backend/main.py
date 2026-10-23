@@ -614,6 +614,32 @@ def run(args: argparse.Namespace) -> int:
         common.write_json(job_dir / "metadata.json", manifest)
         job.finish(queue_items, export_dir=str(job_dir))
 
+        # Auto-post to YouTube Shorts if the user enabled it. The uploader
+        # reads its credentials from the same config.json / settings.json
+        # store as every other token in the dashboard.
+        if cfg.get("youtube_auto_post"):
+            from . import youtube_uploader
+            try:
+                upload_ok = youtube_uploader.upload_short(
+                    video_path=str(job_dir / f"{queue_items[0]['id']}.mp4"),
+                    title=queue_items[0].get("title", ""),
+                    description=queue_items[0].get("caption", ""),
+                )
+                if upload_ok.get("ok"):
+                    common.info(f"YouTube upload succeeded: {upload_ok.get('video_id')}")
+                    # Update the first clip's record so the dashboard can show
+                    # the video ID next to it.  We keep it read-only-ish – the
+                    # UI never trusts this value, it just displays it.
+                    if queue_items and queue_items[0]:
+                        common.write_json(
+                            paths.QUEUE / f"{queue_items[0]['id']}.json",
+                            {**queue_items[0], "youtube_video_id": upload_ok.get("video_id")},
+                        )
+                else:
+                    common.warn(f"YouTube upload failed: {upload_ok.get('error')}")
+            except Exception as exc:
+                common.warn(f"YouTube auto-post failed: {exc}")
+
         if not args.no_notify:
             summary = (
                 f"✅ {len(queue_items)} shorts ready from “{title}”\n"

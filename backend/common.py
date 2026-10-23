@@ -48,6 +48,7 @@ DEFAULTS: dict[str, Any] = {
     "outro_text": "Follow for more African tales",
     "hashtags": "#AfricanTales #AfricanFolklore #Storytime #Shorts",
     "platforms": {"instagram": True, "tiktok": True},
+    "youtube_auto_post": False,
     "viral_keywords": [],
 }
 

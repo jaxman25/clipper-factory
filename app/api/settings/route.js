@@ -109,6 +109,10 @@ export async function PUT(request) {
     };
   }
 
+  if (input.youtube_auto_post !== undefined) {
+    patch.youtube_auto_post = Boolean(input.youtube_auto_post);
+  }
+
   const current = loadSettings();
   if (body.tokens || body.clearTokens) {
     const tokens = { ...(current.tokens || {}) };

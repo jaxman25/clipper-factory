@@ -45,6 +45,12 @@ services:
         value: "1"
       - key: PUBLIC_BASE_URL
         sync: false
+      - key: YOUTUBE_CLIENT_ID
+        sync: false
+      - key: YOUTUBE_CLIENT_SECRET
+        sync: false
+      - key: YOUTUBE_REFRESH_TOKEN
+        sync: false
       - key: DASHBOARD_USER
         sync: false
       - key: DASHBOARD_PASSWORD

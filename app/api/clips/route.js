@@ -13,6 +13,7 @@ export async function GET() {
         timezone: config.timezone,
         posting_times: config.posting_times,
         platforms: config.platforms,
+        youtube_auto_post: config.youtube_auto_post,
         hashtags: config.hashtags,
         outro_text: config.outro_text,
       },

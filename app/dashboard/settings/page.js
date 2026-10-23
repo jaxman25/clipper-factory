@@ -13,6 +13,9 @@ const TOKEN_FIELDS = [
   { key: 'IG_USER_ID', label: 'Instagram user id', hint: 'Business account linked to a Page' },
   { key: 'IG_ACCESS_TOKEN', label: 'Instagram access token', hint: 'Meta long-lived token' },
   { key: 'TIKTOK_AUTH_B64', label: 'TikTok auth.json (base64)', hint: 'Output of --login' },
+  { key: 'YOUTUBE_CLIENT_ID', label: 'YouTube client ID', hint: 'From Google Cloud Console (OAuth2)' },
+  { key: 'YOUTUBE_CLIENT_SECRET', label: 'YouTube client secret', hint: 'From Google Cloud Console' },
+  { key: 'YOUTUBE_REFRESH_TOKEN', label: 'YouTube refresh token', hint: 'From OAuth2 playground or auth flow' },
 ];
 
 function Switch({ checked, onChange, label }) {

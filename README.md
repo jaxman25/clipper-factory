@@ -19,6 +19,7 @@ trade-offs that come with a 512 MB / ephemeral-disk host.
 | `backend/renderer.py` | 9:16 reframe (MediaPipe face centring), drum bed, ASS caption burn-in, thumbnails |
 | `backend/captions.py` | Word-pop captions, hook (0–2 s) and outro (last 2 s) |
 | `backend/broll.py` | Pixabay B-roll for face-less fallbacks |
+| `backend/youtube_uploader.py` | YouTube Shorts uploader (OAuth2 refresh token or Service Account) |
 | `scheduler/scheduler.py` | APScheduler posting loop **and** `--run-once` mode for cron |
 | `telegram_bot/bot.py` | `/start /clip /queue /postnow /settings /cancel`, raw-link handling, optional in-process scheduler |
 | `auto-post/instagram.js` | Meta Graph API Reels upload |
@@ -46,11 +47,11 @@ Generated media lives under `ACF_DATA_ROOT` (`/tmp` on Render):
 | --- | --- |
 | **512 MB RAM** | Keep `WHISPER_MODEL=tiny` and `WHISPER_COMPUTE_TYPE=int8`. Rendering is CPU-heavy; one job at a time is enforced by a lock. A full run (Next + bot + whisper + ffmpeg + Chromium) can still exceed 512 MB; if jobs die, the Starter plan ($7/mo) is the reliable option. |
 | **Ephemeral disk** | Everything in `/tmp` disappears on deploy/restart/spin-down. Queue clips are lost. Post clips as they are made, or download the ZIP before a restart. |
-| **Spin-down after 15 min** | First request takes ~50 s. Keep the service awake with UptimeRobot (section 8). The in-process scheduler needs the service awake. |
+| **Spin-down after 15 min** | First request takes ~50 s. Keep the service awake with UptimeRobot (section 9). The in-process scheduler needs the service awake. |
 | **750 instance hours/month** | One always-awake web service consumes ~744 h, leaving almost nothing for a second free service. Run everything in the one web service. |
 | **Render Cron Jobs are not free** | Minimum $1/month per cron job. The free path is `ACF_ENABLE_SCHEDULER=1` inside the bot. Optional paid cron blocks are in `render.yaml` (commented). |
 | **No GPU** | Everything is CPU + `tiny` whisper. A 20-minute source takes roughly 5–15 minutes to become 10 shorts. |
-| **Datacenter IPs** | YouTube sometimes demands a sign-in. Set `YTDLP_COOKIES` to a `cookies.txt` path (section 9). |
+| **Datacenter IPs** | YouTube sometimes demands a sign-in. Set `YTDLP_COOKIES` to a `cookies.txt` path (section 8). |
 
 ---
 
@@ -78,17 +79,24 @@ Generated media lives under `ACF_DATA_ROOT` (`/tmp` on Render):
 | `TELEGRAM_CHAT_ID` | yes | Where confirmations and alerts go |
 | `PIXABAY_API_KEY` | optional | Free B-roll for face-less clips |
 | `IG_USER_ID`, `IG_ACCESS_TOKEN` | optional | Instagram Reels publishing |
+| `IG_GRAPH_VERSION` | optional | Defaults to `v21.0` |
 | `TIKTOK_AUTH_B64` | optional | Base64 of a Playwright `auth.json` |
+| `TIKTOK_HEADLESS` | optional | `1` uploads headlessly (defaults to `1`) |
 | `PUBLIC_BASE_URL` | optional | Public origin for IG's video fetch; defaults to `RENDER_EXTERNAL_URL` |
-| `YTDLP_COOKIES` | optional | Path to cookies.txt |
+| `YTDLP_COOKIES` | optional | Path to a Netscape-format `cookies.txt` (YouTube block bypass) |
 | `WHISPER_MODEL` | optional | `tiny` (default), `base`, … |
 | `ACF_ENABLE_SCHEDULER` | optional | `1` posts at 19:00/21:00 inside the bot process |
 | `DASHBOARD_USER`, `DASHBOARD_PASSWORD` | optional | HTTP Basic protection for the dashboard |
-| `IG_GRAPH_VERSION` | optional | Defaults to `v21.0` |
+| `YOUTUBE_CLIENT_ID` | optional | OAuth2 Client ID (Google Cloud Console → YouTube Data API v3) |
+| `YOUTUBE_CLIENT_SECRET` | optional | OAuth2 Client Secret |
+| `YOUTUBE_REFRESH_TOKEN` | optional | Offline refresh token from the consent flow |
+| `YOUTUBE_SERVICE_ACCOUNT` | optional | Full Service Account JSON (alternative to the refresh token) |
+| `YOUTUBE_DEFAULT_LANGUAGE` | optional | Defaults to `en` |
+| `YOUTUBE_UPLOAD_SCOPE` | optional | Defaults to `https://www.googleapis.com/auth/youtube.upload` |
 
-`TELEGRAM_*`, `PIXABAY_API_KEY`, `IG_*` and `TIKTOK_AUTH_B64` can also be entered on the dashboard's
-**Settings** page. They are stored in `/tmp/state/settings.json` for immediate use, but Render env
-vars always win and are the only permanent option.
+`TELEGRAM_*`, `PIXABAY_API_KEY`, `IG_*`, `TIKTOK_AUTH_B64` and the `YOUTUBE_*` keys can also be
+entered on the dashboard's **Settings** page. They are stored in `/tmp/state/settings.json` for immediate
+use, but Render env vars always win and are the only permanent option.
 
 ---
 
@@ -172,7 +180,147 @@ session expires.
 
 ---
 
-## 7. YouTube downloads
+## 7. YouTube OAuth credentials (auto-post to YouTube Shorts)
+
+The generator downloads the source with `yt-dlp`, then the worker auto-posts the first clip to
+YouTube Shorts with `backend/youtube_uploader.py`. That uploader needs OAuth2 credentials from the
+Google Cloud Console. Follow these steps once per Google account:
+
+### Step 1 — Go to the Google Cloud Console
+
+1. Open a browser and go to: <https://console.cloud.google.com/>
+2. Sign in with the **Google account** that owns the YouTube channel you want to post to.
+3. Click the **project selector** (top-left, the "▽" or "Select a project" area).
+4. Click **New project** and enter a name like `Clipper Factory Auto-Post`.
+5. Click **Create**. Remember the **Project ID** (e.g. `clipper-factory-auto-post`) — you will need it in the next step.
+
+### Step 2 — Enable the YouTube Data API v3
+
+1. In the navigation menu (≡ in the top-left), go to **APIs & Services → Library**.
+2. Search for **YouTube Data API v3** and open the result.
+3. Click **Enable**.
+
+### Step 3 — Set up the OAuth consent screen
+
+The consent screen is what Google shows the user when they first log in and approve your app.
+
+1. In the navigation menu, go to **APIs & Services → OAuth consent screen**.
+2. Select **External** (the default). This lets any Google user with YouTube access approve the app.
+3. Click **Create**.
+4. Fill in the **App registration** form:
+
+   | Field | What to enter |
+   | --- | --- |
+   | App name | `Clipper Factory Auto-Post` (or any name) |
+   | User support email | Your email or the dashboard's contact email |
+   | App logo | Optional — a small icon |
+   | App domain | Dashboard URL (e.g. `https://your-domain.com`) — optional but recommended |
+   | Developer contact information | Your email |
+
+5. Scroll down and click **Save and Continue**.
+6. On the **Scopes** screen, the default scope is:
+
+   ```
+   https://www.googleapis.com/auth/youtube.readonly
+   ```
+
+   Click **Change** and replace it with:
+
+   ```
+   https://www.googleapis.com/auth/youtube.upload
+   ```
+
+7. Click **Save and Continue**.
+8. On the **Test users** screen, click **Add users** and enter the email address of the Google account you used at the start. That account will be the only one allowed to approve the app during testing.
+9. Click **Save and Continue**.
+10. Review the summary and click **Back to Dashboard**.
+11. On the OAuth consent screen page, make sure **Status** is **Testing** (if it says Production, click **Go to Testing**).
+
+### Step 4 — Create OAuth 2.0 Client IDs (Desktop app)
+
+1. In the navigation menu, go to **APIs & Services → Credentials**.
+2. Click **Create Credentials → OAuth client ID**.
+3. If prompted, set **Application type** to **Desktop app**.
+4. Give it a name like `Clipper Factory Auto-Post`.
+5. Click **Create**.
+6. Copy the **Client ID** and **Client secret** into the dashboard's YouTube block (see below).
+
+> The redirect URI does not matter for this flow — the script uses the refresh token directly, so
+> no real HTTP redirect is involved. You can leave the default `http://localhost`.
+
+### Step 5 — Get a refresh token with the Python script
+
+The uploader needs an **offline refresh token**. Run the script below once; it opens your browser,
+you log in, and the token is printed to your terminal. (Python 3.10+ only; install the deps first with `pip3 install -r requirements.txt` — no virtualenv needed on a laptop.)
+
+```python
+#!/usr/bin/env python3
+"""One-time OAuth2 consent flow: prints the YouTube refresh token.
+
+Save as scripts/get_youtube_refresh_token.py and run:
+    python3 scripts/get_youtube_refresh_token.py
+"""
+
+import os
+import sys
+
+# Let this script import helpers from the project root.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from google_auth_oauthlib.flow import InstalledAppFlow
+
+SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+CLIENT_CONFIG = {
+    "installed": {
+        "client_id": os.getenv("YOUTUBE_CLIENT_ID", ""),
+        "client_secret": os.getenv("YOUTUBE_CLIENT_SECRET", ""),
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    }
+}
+
+
+def main() -> None:
+    if not CLIENT_CONFIG["installed"]["client_id"] or not CLIENT_CONFIG["installed"]["client_secret"]:
+        print("Set YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET in .env first.")
+        sys.exit(1)
+
+    flow = InstalledAppFlow.from_client_config(
+        CLIENT_CONFIG, scopes=SCOPES, redirect_uri="http://localhost"
+    )
+    # The flow will open a browser. After you sign in and grant permissions,
+    # the refresh token is printed to the terminal.
+    credentials = flow.run_local_server(port=0, prompt="consent")
+    print("Refresh token:")
+    print(credentials.refresh_token)
+
+
+if __name__ == "__main__":
+    main()
+```
+
+1. Open the file, then update the `client_id` and `client_secret` in the script (or set them as `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` in `.env`).
+2. Run it from a terminal.
+3. A browser window opens. Sign in with the Google account from Step 1 and allow the app.
+4. The script prints the refresh token. Copy the entire line into the dashboard's Youtube block:
+
+   | Dashboard field | What to paste |
+   | --- | --- |
+   | YouTube client ID | The Client ID from Step 4 |
+   | YouTube client secret | The Client secret from Step 4 |
+   | YouTube refresh token | The printed refresh token |
+
+When all three turn green, `backend/youtube_uploader.py` can upload the first clip in a run to YouTube Shorts automatically.
+
+### Step 6 — (Alternative) Service account JSON
+
+If you would rather not use a browser, create a service account in the Google Cloud Console
+(**IAM & Admin → Service Accounts → Create Service Account**), download the JSON key under **Keys**, and paste the whole JSON into the dashboard's `YOUTUBE_SERVICE_ACCOUNT` field. Grant it the `youtube.upload` role. Service accounts cannot use the browser consent flow, so the refresh token is not needed.
+
+---
+
+## 9. YouTube downloads
 
 `yt-dlp` works for most videos, but YouTube occasionally blocks cloud IPs ("Sign in to confirm
 you're not a bot"). When that happens:
@@ -182,10 +330,6 @@ you're not a bot"). When that happens:
    into a private image or fetch it at boot; env vars cannot hold a file).
 
 Keep sources under ~30 minutes; transcription is the slowest step on a free CPU.
-
----
-
-## 8. Keep it awake with UptimeRobot
 
 1. Create a free [UptimeRobot](https://uptimerobot.com) account.
 2. **Add New Monitor** → HTTP(s) → URL `https://<your-service>.onrender.com/api/health` →
@@ -296,7 +440,7 @@ written to `state/settings.json` and override it.
 | First request takes ~50 s | Normal cold start on the free plan. UptimeRobot prevents it. |
 | Queue disappears after deploy | `/tmp` is ephemeral by design. Download the ZIP or post before restarting. |
 | `ffmpeg failed` / no audio | Confirm the clip plays locally; some source containers have no audio track — the renderer then uses a silent bed. |
-| YouTube bot check | Set `YTDLP_COOKIES` (section 7). |
+| YouTube bot check | Set `YTDLP_COOKIES` (section 9) **or** `YOUTUBE_CLIENT_ID`/`YOUTUBE_CLIENT_SECRET`/`YOUTUBE_REFRESH_TOKEN` for an OAuth2 upload (section 7). |
 | `Missing Python packages` in job status | The image was built before requirements changed. Redeploy. |
 | Instagram 400 "media download failed" | `PUBLIC_BASE_URL`/`RENDER_EXTERNAL_URL` wrong, service asleep, or media route blocked by Basic auth (it is excluded). |
 | Instagram stuck `IN_PROGRESS` | Reels processing can take minutes; the scheduler waits 5. Check the clip is H.264/AAC (it is) and under 90 s. |
