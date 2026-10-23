@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { AlertCircle, Link2, Loader2, Sparkles, XCircle, Square } from 'lucide-react';
 import { useStudio } from '@/components/studio/StudioProvider';
 
-function Progress({ job, onClear }) {
+function Progress({ job, onClear, onCancel, onCanceling }) {
   const running = job.status === 'running';
   const failed = job.status === 'error';
   const pct = Math.max(0, Math.min(100, Number(job.progress) || 0));
