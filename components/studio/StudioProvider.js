@@ -19,6 +19,7 @@ export function StudioProvider({ children }) {
   const [health, setHealth] = useState(null);
   const [job, setJob] = useState(null);
   const [jobs, setJobs] = useState([]);
+  const [mode, setMode] = useState('viral');
   const [loading, setLoading] = useState(true);
   const [toastText, setToastText] = useState('');
   const toastTimer = useRef(null);
@@ -99,11 +100,11 @@ export function StudioProvider({ children }) {
   }, [job?.id, job?.status, refresh, refreshJobs, notify]);
 
   const startGeneration = useCallback(
-    async (url, numShorts) => {
+    async (url, numShorts, mode = 'viral') => {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, num_shorts: Number(numShorts) }),
+        body: JSON.stringify({ url, num_shorts: Number(numShorts), mode }),
       });
       const payload = await response.json();
       if (!response.ok) {
@@ -117,6 +118,7 @@ export function StudioProvider({ children }) {
         status: 'running',
         progress: 0,
         stage: 'queued',
+        mode: mode,
         message: 'Queued for the clip worker',
       });
       refreshJobs();
@@ -164,6 +166,10 @@ export function StudioProvider({ children }) {
       startGeneration,
       reschedule,
       notify,
+      mode,
+      setMode,
+      mode,
+      setMode,
     }),
     [data, clips, posted, avgScore, health, loading, job, jobs, refresh, refreshJobs, startGeneration, reschedule, notify]
   );

@@ -40,7 +40,11 @@ export async function POST(request) {
     return Response.json({ error: 'Only http(s) URLs are supported' }, { status: 400 });
   }
 
+  const mode = String(body.mode || 'viral');
   const numShorts = Math.max(1, Math.min(20, Number(body.num_shorts) || 10));
+  if (mode !== 'viral' && mode !== 'equal') {
+    return Response.json({ error: 'mode must be either "viral" or "equal"' }, { status: 400 });
+  }
   ensureDirs();
 
   // Refuse to stampede the free CPU with a second whisper/ffmpeg job.
@@ -73,7 +77,7 @@ export async function POST(request) {
   const jobId = sanitizeId(`job-${Date.now().toString(36)}`);
   const worker = startPython(
     'backend/main.py',
-    ['--url', url, '--job-id', jobId, '--num-shorts', String(numShorts)],
+    ['--url', url, '--job-id', jobId, '--num-shorts', String(numShorts), '--mode', mode],
     jobId
   );
 
@@ -88,6 +92,7 @@ export async function POST(request) {
     message: 'Queued for the clip worker',
     source_url: url,
     num_shorts: numShorts,
+    mode: mode,
     clips: [],
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -124,5 +129,6 @@ export async function POST(request) {
     job_id: jobId,
     pid: worker.pid,
     log: worker.log,
+    mode: mode,
   }, { status: 202 });
 }

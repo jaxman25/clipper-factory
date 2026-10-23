@@ -57,7 +57,7 @@ function Progress({ job, onClear, onCancel, onCanceling }) {
 }
 
 export default function GeneratePanel({ autoFocus = false }) {
-  const { config, job, setJob, startGeneration, notify } = useStudio();
+  const { config, job, setJob, startGeneration, notify, mode, setMode } = useStudio();
   const [url, setUrl] = useState('');
   const [num, setNum] = useState(config?.shorts_per_video || 10);
   const [busy, setBusy] = useState(false);
@@ -72,7 +72,7 @@ export default function GeneratePanel({ autoFocus = false }) {
     }
     setBusy(true);
     try {
-      await startGeneration(url.trim(), num);
+      await startGeneration(url.trim(), num, mode);
       setUrl('');
       notify('Generation started — clips land in 5–15 minutes');
     } catch (err) {
@@ -162,9 +162,32 @@ export default function GeneratePanel({ autoFocus = false }) {
 
         {job && <Progress job={job} onClear={() => setJob(null)} onCancel={cancelJob} onCanceling={canceling} />}
 
+        <div className="mt-4 flex items-center justify-between gap-4 rounded-lg bg-white/5 p-3">
+          <span className="text-xs text-zinc-400">Clip mode</span>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setMode('viral')}
+              className={`relative w-full rounded-md px-4 py-2 text-sm font-medium transition ${
+                mode === 'viral' ? 'bg-brand text-white' : 'bg-white/10 text-zinc-400 hover:text-white'
+              } ${running ? 'pointer-events-none opacity-50' : ''}`}
+            >
+              Viral Moments
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('equal')}
+              className={`relative w-full rounded-md px-4 py-2 text-sm font-medium transition ${
+                mode === 'equal' ? 'bg-brand text-white' : 'bg-white/10 text-zinc-400 hover:text-white'
+              } ${running ? 'pointer-events-none opacity-50' : ''}`}
+            >
+              Equal Slices
+            </button>
+          </div>
+        </div>
+
         <p className="mt-4 text-[11px] text-zinc-500">
-          {config?.shorts_per_video || 10} shorts per run · {config?.clip_min_seconds || 30}–
-          {config?.clip_max_seconds || 45}s clips · one job at a time
+          {config?.shorts_per_video || 10} shorts per run · one job at a time
         </p>
       </div>
     </section>

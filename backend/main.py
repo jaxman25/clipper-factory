@@ -51,7 +51,9 @@ class JobError(RuntimeError):
 class Job:
     """Progress document polled by the dashboard and Telegram bot."""
 
-    def __init__(self, job_id: str, url: str, num_shorts: int) -> None:
+    def __init__(
+        self, job_id: str, url: str, num_shorts: int, mode: str = "viral"
+    ) -> None:
         self.id = job_id
         self.path = paths.JOBS / f"{job_id}.json"
         self.data: dict[str, Any] = {
@@ -62,6 +64,7 @@ class Job:
             "message": "Starting job",
             "source_url": url,
             "num_shorts": num_shorts,
+            "mode": mode,
             "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "clips": [],
@@ -337,8 +340,9 @@ def run(args: argparse.Namespace) -> int:
     cfg = common.load_config()
     num_shorts = int(args.num_shorts or cfg.get("shorts_per_video", 10))
     job_id = paths.safe_id(args.job_id or datetime.now().strftime("job-%Y%m%d-%H%M%S"))
-    job = Job(job_id, args.url or args.local_file or "", num_shorts)
-    common.info(f"Job {job_id} started", url=args.url or args.local_file)
+    mode = getattr(args, "mode", "viral")
+    job = Job(job_id, args.url or args.local_file or "", num_shorts, mode)
+    common.info(f"Job {job_id} started (mode={mode})", url=args.url or args.local_file)
 
     # Abort is signalled by removing this file's lock — the dashboard backend
     # drops generate.lock and writes status='cancelled' to the job doc. The
@@ -373,39 +377,95 @@ def run(args: argparse.Namespace) -> int:
             raise JobError("Source video is too short to cut shorts from")
 
         audio = extract_audio(source, job_id)
-        segments_raw, language, _ = transcribe(audio, job)
-        job.update(
-            stage="analyze",
-            progress=44,
-            message=f"Scoring {len(segments_raw)} transcript segments for viral moments",
-            language=language,
-        )
 
-        rms = viral.compute_rms(str(audio))
-        segments = viral.build_segments(segments_raw)
-        keywords = cfg.get("viral_keywords") or viral.DEFAULT_KEYWORDS
-        min_s = float(cfg.get("clip_min_seconds", 30) or 30)
-        max_s = float(cfg.get("clip_max_seconds", 45) or 45)
+        if mode == "equal":
+            # Equal-slices mode: divide total duration by num_shorts and cut
+            # even windows from start to finish. No transcript, no viral score,
+            # no caption burn-in (captions need word timestamps).
+            segments_raw = []
+            language = "en"
+            job.update(
+                stage="analyze",
+                progress=44,
+                message="Slicing evenly into equal segments",
+                language=language,
+            )
+            candidates = []
+            if duration >= num_shorts * 3:
+                step = duration / num_shorts
+                for i in range(num_shorts):
+                    start = i * step
+                    end = min(duration, start + max(3.0, duration / num_shorts))
+                    candidates.append(
+                        viral.Candidate(
+                            start=round(start, 3),
+                            end=round(end, 3),
+                            text="",
+                            words=[],
+                            score=round(max(20.0, 60.0 - i * 3.0), 1),
+                            reasons=["equal slice - visual highlight"],
+                        )
+                    )
+            else:
+                # Very short source: just split at a fixed interval.
+                step = max(3.0, duration / num_shorts)
+                for i in range(num_shorts):
+                    start = i * step
+                    end = min(duration, start + step)
+                    if end - start < 2.0:
+                        break
+                    candidates.append(
+                        viral.Candidate(
+                            start=round(start, 3),
+                            end=round(end, 3),
+                            text="",
+                            words=[],
+                            score=round(40.0, 1),
+                            reasons=["equal slice - visual highlight"],
+                        )
+                    )
+            selected = candidates[:num_shorts]
+            job.update(
+                stage="render",
+                progress=46,
+                message=f"Rendering {len(selected)} vertical shorts (equal slices)",
+                candidates=len(selected),
+            )
+        else:
+            # Viral mode: keep the existing AI-driven transcript logic.
+            segments_raw, language, _ = transcribe(audio, job)
+            job.update(
+                stage="analyze",
+                progress=44,
+                message=f"Scoring {len(segments_raw)} transcript segments for viral moments",
+                language=language,
+            )
 
-        candidates = viral.find_candidates(segments, rms, keywords, min_s, max_s)
-        selected = viral.select_top(candidates, num_shorts, min_s, max_s)
-        if len(selected) < num_shorts:
-            extra = viral.fallback_windows(duration, num_shorts, min_s, max_s)
-            for cand in extra:
-                if len(selected) >= num_shorts:
-                    break
-                if all(abs(cand.start - s.start) > 1.5 for s in selected):
-                    selected.append(cand)
-            selected.sort(key=lambda c: c.start)
+            rms = viral.compute_rms(str(audio))
+            segments = viral.build_segments(segments_raw)
+            keywords = cfg.get("viral_keywords") or viral.DEFAULT_KEYWORDS
+            min_s = float(cfg.get("clip_min_seconds", 30) or 30)
+            max_s = float(cfg.get("clip_max_seconds", 45) or 45)
 
-        if not selected:
-            raise JobError("No usable segments found in this video")
-        job.update(
-            stage="render",
-            progress=46,
-            message=f"Rendering {len(selected)} vertical shorts",
-            candidates=len(candidates),
-        )
+            candidates = viral.find_candidates(segments, rms, keywords, min_s, max_s)
+            selected = viral.select_top(candidates, num_shorts, min_s, max_s)
+            if len(selected) < num_shorts:
+                extra = viral.fallback_windows(duration, num_shorts, min_s, max_s)
+                for cand in extra:
+                    if len(selected) >= num_shorts:
+                        break
+                    if all(abs(cand.start - s.start) > 1.5 for s in selected):
+                        selected.append(cand)
+                selected.sort(key=lambda c: c.start)
+
+            if not selected:
+                raise JobError("No usable segments found in this video")
+            job.update(
+                stage="render",
+                progress=46,
+                message=f"Rendering {len(selected)} vertical shorts",
+                candidates=len(candidates),
+            )
 
         broll_path = None
         if os.getenv("PIXABAY_API_KEY", "").strip():
@@ -421,15 +481,34 @@ def run(args: argparse.Namespace) -> int:
         for index, candidate in enumerate(selected, start=1):
             clip_id = f"{job_id}-{index:02d}"
             base_pct = 46 + int((index - 1) / len(selected) * 48)
-            job.update(
-                stage="render",
-                progress=base_pct,
-                message=f"Rendering clip {index}/{len(selected)} (score {candidate.score:.0f})",
-            )
-            clip_start, clip_end = _trim_to_words(candidate, duration)
-            words = _relative_words(candidate, clip_start)
-            hook = viral.hook_text(candidate)
-            transcript = candidate.text.strip()
+            hook = ""
+            transcript = ""
+            words = []
+            title = f"Equal Slice {index}"
+
+            if mode == "equal":
+                # Equal mode: no transcript, no captions, no hook text.
+                # Just cut the vertical segment and let the renderer handle
+                # the cinematic fallback.
+                clip_start = round(candidate.start, 3)
+                clip_end = round(candidate.end, 3)
+                job.update(
+                    stage="render",
+                    progress=base_pct,
+                    message=f"Rendering equal slice {index}/{len(selected)}",
+                )
+            else:
+                clip_start, clip_end = _trim_to_words(candidate, duration)
+                words = _relative_words(candidate, clip_start)
+                hook = viral.hook_text(candidate)
+                transcript = candidate.text.strip()
+                title = hook.title() if hook else f"African Tale #{index}"
+                job.update(
+                    stage="render",
+                    progress=base_pct,
+                    message=f"Rendering clip {index}/{len(selected)} (score {candidate.score:.0f})",
+                )
+
             clip_path = job_dir / f"{clip_id}.mp4"
             thumb_path = job_dir / f"{clip_id}.jpg"
 
@@ -453,12 +532,12 @@ def run(args: argparse.Namespace) -> int:
                 "job_id": job_id,
                 "source_url": args.url or str(source),
                 "source_title": title,
-                "title": hook.title() if hook else f"African Tale #{index}",
+                "title": title,
                 "hook": hook,
-                "caption": viral.social_caption(candidate, hashtags),
+                "caption": viral.social_caption(candidate, hashtags) if mode == "viral" else transcript,
                 "transcript": transcript,
-                "viral_score": round(candidate.score, 1),
-                "reasons": candidate.reasons,
+                "viral_score": round(candidate.score, 1) if mode == "viral" else None,
+                "reasons": candidate.reasons if mode == "viral" else [],
                 "start": clip_start,
                 "end": clip_end,
                 "duration": render_meta["duration"],
@@ -472,6 +551,7 @@ def run(args: argparse.Namespace) -> int:
                 "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
                 "posted_at": None,
                 "platforms": {},
+                "mode": mode,
             }
             if thumb_path.exists():
                 shutil.copy2(thumb_path, paths.QUEUE / thumb_path.name)
@@ -530,6 +610,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--local-file", help="Use a local video file instead of downloading")
     parser.add_argument("--num-shorts", type=int, default=10, help="How many clips to render (default 10)")
     parser.add_argument("--job-id", help="Stable job id supplied by the dashboard/bot")
+    parser.add_argument("--mode", choices=["viral", "equal"], default="viral", help="Detection mode: 'viral' (best 30-45s clips) or 'equal' (evenly sliced)")
     parser.add_argument("--keep-source", action="store_true", help="Keep the downloaded source file")
     parser.add_argument("--no-notify", action="store_true", help="Do not send Telegram messages")
     return parser
