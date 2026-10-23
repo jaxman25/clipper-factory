@@ -151,7 +151,7 @@ export default function QueuePage() {
     </div>
   );
 
-  function confirmReset() {
+  async function confirmReset() {
     setResetOpen(false);
     setResetting(true);
     try {

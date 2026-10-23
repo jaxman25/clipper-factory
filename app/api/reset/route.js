@@ -2,12 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DIRS, ensureDirs } from '@/lib/store';
 
-// Destructive. Requires explicit "yes" body so an accidental click can't
+// Destructive. Requires explicit confirmation so an accidental click can't
 // nuke the queue on a mis-typed request.
-const ALLOWED = new Set(['yes', 'y', 'confirm', 'confirm-clear', 'reset']);
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+
+export const maxDuration = 60;
 
 function cleanDir(dir) {
   if (!fs.existsSync(dir)) return 0;
@@ -42,15 +43,43 @@ function clearDirectory(name) {
   return removed;
 }
 
-export const maxDuration = 60;
-
 export async function POST(request) {
-  const raw = await request.text();
-  const body = raw.trim().toLowerCase();
+  // Debug: log the exact raw body the frontend sent, so we can see why the
+  // confirmation check rejected it.
+  let raw;
+  try {
+    raw = await request.text();
+  } catch (err) {
+    console.error('[RESET] request.text() threw:', err.message);
+    return Response.json({ ok: false, error: 'Failed to read request body' }, { status: 400 });
+  }
+  console.log('[RESET] raw body received:', raw);
+  console.log('[RESET] raw body (lower):', raw.trim().toLowerCase());
 
-  if (!ALLOWED.has(body)) {
+  let parsed;
+  try {
+    parsed = JSON.parse(raw.trim());
+    console.log('[RESET] parsed JSON:', parsed);
+  } catch (err) {
+    console.error('[RESET] JSON.parse failed:', err.message);
     return Response.json(
-      { ok: false, error: 'Reset requires explicit confirmation: pass {"confirm": true}' },
+      { ok: false, error: 'Invalid JSON body. Expected {"confirm": true}' },
+      { status: 400 }
+    );
+  }
+
+  // The confirmation must be an explicit boolean true (or the string "true").
+  if (typeof parsed.confirm !== 'boolean' || parsed.confirm !== true) {
+    console.warn(
+      '[RESET] confirmation check failed: confirm =', parsed.confirm,
+      '(type:', typeof parsed.confirm, ')'
+    );
+    return Response.json(
+      {
+        ok: false,
+        error: 'Reset requires explicit confirmation.',
+        hint: 'Pass {"confirm": true} in the JSON body.',
+      },
       { status: 400 }
     );
   }
