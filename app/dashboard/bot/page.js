@@ -157,7 +157,7 @@ export default function BotPage() {
                 botReady ? 'text-ok' : 'text-warn'
               )}
             >
-              <span className={cn('h-1.5 w-1.5 rounded-full', botReady ? 'bg-emerald-400' : 'bg-amber-400')} />
+              <span className={cn('h-1.5 w-1.5 rounded-full', botReady ? 'bg-ok' : 'bg-warn')} />
               {botReady ? 'token present' : 'token missing'}
             </span>
             <ClearLogsButton />

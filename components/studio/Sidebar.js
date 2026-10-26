@@ -71,7 +71,7 @@ function StatusFooter() {
             <span
               className={cn(
                 'h-2 w-2 rounded-full',
-                online ? 'bg-emerald-400 shadow-[0_0_0_3px_rgba(52,211,153,0.15)]' : 'bg-amber-400'
+                online ? 'bg-ok shadow-[0_0_0_3px_rgb(var(--ok-rgb)/0.15)]' : 'bg-warn'
               )}
             />
             Render: {online ? 'Online' : 'Waking…'}
@@ -153,7 +153,7 @@ export default function Sidebar() {
           <span
             className={cn(
               'h-1.5 w-1.5 rounded-full',
-              health?.status === 'ok' ? 'bg-emerald-400' : 'bg-amber-400'
+              health?.status === 'ok' ? 'bg-ok' : 'bg-warn'
             )}
           />
           {health?.status === 'ok' ? 'Online' : 'Waking'}

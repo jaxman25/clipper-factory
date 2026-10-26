@@ -127,7 +127,7 @@ export default function ClipCard({ clip }) {
         <span
           className={cn(
             'absolute left-3 top-3 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide backdrop-blur',
-            posted ? 'bg-emerald-500/15 text-ok' : 'bg-black/60 text-fg'
+            posted ? 'bg-ok/15 text-ok' : 'bg-black/60 text-fg'
           )}
         >
           {clip.manual_required ? 'Needs manual' : posted ? 'Posted' : 'Queued'}

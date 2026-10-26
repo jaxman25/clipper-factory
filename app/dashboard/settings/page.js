@@ -201,8 +201,8 @@ export default function SettingsPage() {
           className={cn(
             'rounded-lg border px-3.5 py-2.5 text-[12px]',
             note.kind === 'error'
-              ? 'border-red-500/30 bg-red-500/10 text-danger'
-              : 'border-emerald-500/30 bg-emerald-500/10 text-ok'
+              ? 'border-danger/30 bg-danger/10 text-danger'
+              : 'border-ok/30 bg-ok/10 text-ok'
           )}
         >
           {note.text}
@@ -374,7 +374,7 @@ export default function SettingsPage() {
                   <span
                     className={cn(
                       'pill shrink-0',
-                      configured ? 'border-emerald-500/30 text-ok' : 'text-subtle'
+                      configured ? 'border-ok/30 text-ok' : 'text-subtle'
                     )}
                   >
                     {configured ? <Check className="h-3 w-3" /> : <KeyRound className="h-3 w-3" />}

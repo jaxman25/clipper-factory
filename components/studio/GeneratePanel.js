@@ -51,7 +51,7 @@ function Progress({ job, onClear, onCancel, onCanceling }) {
       <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-wash-strong">
         <div
           className={`h-full rounded-full transition-all duration-500 ${
-            failed ? 'bg-red-500' : 'bg-gradient-to-r from-brand to-brand-hover'
+            failed ? 'bg-danger' : 'bg-gradient-to-r from-brand to-brand-hover'
           }`}
           style={{ width: `${failed ? 100 : pct}%` }}
         />

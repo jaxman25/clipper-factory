@@ -114,7 +114,7 @@ export default function QueuePage() {
           <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-6 shadow-2xl">
             <div className="flex flex-col gap-4">
               <div className="flex items-start gap-3">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-500/15 text-danger">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-danger/15 text-danger">
                   <AlertTriangle className="h-5 w-5" />
                 </span>
                 <div>
