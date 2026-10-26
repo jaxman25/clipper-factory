@@ -113,6 +113,7 @@ export function StudioProvider({ children }) {
       const next = { ...current };
       if (patch.posting_times !== undefined) next.posting_times = patch.posting_times;
       if (patch.timezone !== undefined) next.timezone = patch.timezone;
+      if (patch.youtube_auto_post !== undefined) next.youtube_auto_post = patch.youtube_auto_post;
       return next;
     });
   }, []);

@@ -21,7 +21,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 try:
     from . import captions, common, paths
@@ -286,13 +286,35 @@ def render_clip(
     label: str = "",
     thumb_path: Path | None = None,
     info: dict | None = None,
+    highlight_words: Sequence[str] | None = None,
+    max_duration: float = 25.0,
+    **kwargs: Any,
 ) -> dict:
-    """Render one vertical short. Returns render metadata."""
+    """Render one vertical short. Returns render metadata.
+
+    ``highlight_words`` overrides the keyword list used for caption
+    highlighting; when it is ``None`` the value from ``cfg`` (or
+    ``captions.DEFAULT_HIGHLIGHT_WORDS``) is used. Additional keyword
+    arguments are accepted so that a caller adding an option ahead of this
+    signature cannot crash a render, but they are reported rather than
+    silently dropped.
+    """
+    if kwargs:
+        common.warn(
+            "render_clip ignoring unknown options: " + ", ".join(sorted(kwargs))
+        )
+
     info = info or probe(source)
     speed = float(cfg.get("playback_speed", 1.1) or 1.0)
     speed = max(1.0, min(1.5, speed))
     raw_duration = max(1.0, end - start)
     out_duration = raw_duration / speed
+
+    # Hard cap: the final video must never exceed max_duration seconds.
+    # The video is trimmed to this bound BEFORE the speed-up is applied, so
+    # the output is always exactly max_duration or less, regardless of the
+    # source segment length or the 1.1x speed-up.
+    out_duration = min(out_duration, max_duration)
 
     face = detect_face_center(source, start, end) if info.get("height") else None
     width = info.get("width") or 0
@@ -312,7 +334,11 @@ def render_clip(
         outro_seconds=float(cfg.get("outro_seconds", 2) or 2),
         transcript=transcript,
         label=label,
-        highlight_words=cfg.get("highlight_words", captions.DEFAULT_HIGHLIGHT_WORDS),
+        highlight_words=(
+            highlight_words
+            if highlight_words is not None
+            else cfg.get("highlight_words", captions.DEFAULT_HIGHLIGHT_WORDS)
+        ),
     )
     ass_path.write_text(ass_doc, encoding="utf-8")
 
@@ -464,7 +490,7 @@ def render_clip(
         "-profile:v", "high", "-level", "4.1", "-pix_fmt", "yuv420p",
         "-r", "30", "-g", "60",
         "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
-        "-movflags", "+faststart", "-t", f"{out_duration:.3f}",
+        "-t", f"{out_duration:.3f}",
         str(out_path),
     ])
 

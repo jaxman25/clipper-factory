@@ -540,6 +540,7 @@ def run(args: argparse.Namespace) -> int:
                     thumb_path=thumb_path,
                     info=info,
                     highlight_words=highlight_words,
+                    max_duration=cfg.get("clip_max_seconds", 25) or 25,
                 )
             else:
                 clip_start, clip_end = _trim_to_words(candidate, duration)
@@ -565,6 +566,7 @@ def run(args: argparse.Namespace) -> int:
                     thumb_path=thumb_path,
                     info=info,
                     highlight_words=highlight_words,
+                    max_duration=cfg.get("clip_max_seconds", 25) or 25,
                 )
 
         scheduled = slots[index - 1] if index - 1 < len(slots) else scheduling.next_slot(cfg)

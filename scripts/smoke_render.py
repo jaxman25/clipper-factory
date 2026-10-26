@@ -65,6 +65,8 @@ def main() -> int:
         hook="SHE WARNED HIM",
         transcript="She warned him never to go into the forest at midnight.",
         thumb_path=work / "thumb.jpg",
+        # Exercises the keyword list the worker passes in production.
+        highlight_words=["forest", "midnight"],
     )
     probe = subprocess.run(
         [renderer.which_ffprobe(), "-v", "error", "-show_streams", "-show_format",
