@@ -11,6 +11,8 @@ import {
   Video,
 } from 'lucide-react';
 
+import ThemeToggle from '@/components/studio/ThemeToggle';
+
 const FEATURES = [
   {
     n: '01',
@@ -19,9 +21,9 @@ const FEATURES = [
     body: 'Drop a YouTube URL and the worker pulls the source at up to 1080p. No uploads, no manual trimming.',
     preview: (
       <div className="space-y-2">
-        <div className="flex items-center gap-2 rounded-lg border border-white/10 bg-[#0E0E10] px-3 py-2">
+        <div className="flex items-center gap-2 rounded-lg border border-line bg-field px-3 py-2">
           <Video className="h-4 w-4 shrink-0 text-brand" />
-          <span className="truncate text-[11px] text-zinc-400">youtube.com/watch?v=8Kc2…</span>
+          <span className="truncate text-[11px] text-muted">youtube.com/watch?v=8Kc2…</span>
         </div>
         <div className="flex items-center justify-between rounded-lg bg-brand/15 px-3 py-2">
           <span className="text-[11px] font-semibold text-brand">Generate 10 shorts</span>
@@ -39,13 +41,13 @@ const FEATURES = [
       <div className="space-y-1.5">
         {[92, 64, 78, 46, 88].map((w, i) => (
           <div key={i} className="flex items-center gap-2">
-            <div className="h-1.5 rounded-full bg-white/10" style={{ width: `${w}%` }}>
+            <div className="h-1.5 rounded-full bg-wash-strong" style={{ width: `${w}%` }}>
               <div
-                className={`h-1.5 rounded-full ${i === 0 ? 'bg-brand' : 'bg-white/25'}`}
+                className={`h-1.5 rounded-full ${i === 0 ? 'bg-brand' : 'bg-wash-strong'}`}
                 style={{ width: i === 0 ? '100%' : '60%' }}
               />
             </div>
-            <span className="text-[10px] tabular-nums text-zinc-600">{95 - i * 9}</span>
+            <span className="text-[10px] tabular-nums text-subtle/80">{95 - i * 9}</span>
           </div>
         ))}
       </div>
@@ -56,10 +58,9 @@ const FEATURES = [
     icon: Crop,
     title: 'Vertical by default',
     body: 'Face-aware 9:16 reframing that follows the speaker. No face? A cinematic blurred bed keeps the frame alive.',
-    preview: (
-      <div className="relative h-[86px] overflow-hidden rounded-lg border border-white/10 bg-gradient-to-br from-[#1b2a52] to-[#0b0b10]">
+    preview: (        <div className="relative h-[86px] overflow-hidden rounded-lg border border-line bg-gradient-to-br from-[#382a28] to-[#211b1a]">
         <div className="absolute inset-y-2 left-1/2 w-9 -translate-x-1/2 rounded border border-dashed border-brand/70 bg-brand/10" />
-        <span className="absolute bottom-1.5 left-1.5 rounded bg-black/60 px-1.5 py-0.5 text-[9px] font-semibold text-white">
+        <span className="absolute bottom-1.5 left-1.5 rounded bg-black/60 px-1.5 py-0.5 text-[9px] font-semibold text-fg">
           1080 × 1920
         </span>
       </div>
@@ -71,7 +72,7 @@ const FEATURES = [
     title: 'Word-pop captions',
     body: 'Two-to-three word cards in bold yellow with a hook and outro baked in. Captions are burned, so they travel everywhere.',
     preview: (
-      <div className="flex h-[86px] flex-col items-center justify-center gap-1.5 rounded-lg border border-white/10 bg-[#0E0E10]">
+      <div className="flex h-[86px] flex-col items-center justify-center gap-1.5 rounded-lg border border-line bg-field">
         <div className="flex gap-1">
           <span className="rounded bg-[#FFD700] px-1.5 py-0.5 text-[10px] font-black text-black">SHE</span>
           <span className="rounded bg-[#FFD700] px-1.5 py-0.5 text-[10px] font-black text-black">WARNED</span>
@@ -86,16 +87,16 @@ const FEATURES = [
     title: 'Two posts a day',
     body: 'Clips land on a 19:00 and 21:00 EAT calendar. Drag a chip to another slot and the scheduler follows instantly.',
     preview: (
-      <div className="rounded-lg border border-white/10 bg-[#0E0E10] p-2">
+      <div className="rounded-lg border border-line bg-field p-2">
         <div className="grid grid-cols-7 gap-1">
           {Array.from({ length: 14 }).map((_, i) => (
             <div
               key={i}
-              className={`h-3 rounded-sm ${[8, 12].includes(i) ? 'bg-brand' : 'bg-white/10'}`}
+              className={`h-3 rounded-sm ${[8, 12].includes(i) ? 'bg-brand' : 'bg-wash-strong'}`}
             />
           ))}
         </div>
-        <div className="mt-2 flex justify-between text-[9px] text-zinc-500">
+        <div className="mt-2 flex justify-between text-[9px] text-subtle">
           <span>19:00</span>
           <span>21:00</span>
         </div>
@@ -116,10 +117,10 @@ const FEATURES = [
         ].map(({ icon: Icon, label }) => (
           <div
             key={label}
-            className="flex flex-1 flex-col items-center gap-1 rounded-lg border border-white/10 bg-[#0E0E10] py-2"
+            className="flex flex-1 flex-col items-center gap-1 rounded-lg border border-line bg-field py-2"
           >
             <Icon className="h-4 w-4 text-brand" />
-            <span className="text-[9px] uppercase tracking-wider text-zinc-500">{label}</span>
+            <span className="text-[9px] uppercase tracking-wider text-subtle">{label}</span>
           </div>
         ))}
       </div>
@@ -130,34 +131,38 @@ const FEATURES = [
 export default function LandingPage() {
   return (
     <div className="relative overflow-hidden">
-      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[520px] bg-[radial-gradient(60%_60%_at_50%_0%,rgba(47,128,237,0.22),transparent_70%)]" />
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[520px] bg-[radial-gradient(60%_60%_at_50%_0%,rgb(var(--brand-rgb)/0.22),transparent_70%)]" />
 
-      <header className="sticky top-0 z-40 border-b border-white/5 bg-ink/80 backdrop-blur-xl">
+      <header className="fixed inset-x-0 top-0 z-40 border-b border-line/60 bg-ink/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-5">
           <Link href="/" aria-label="Clipper Factory" className="flex items-center">
             <img src="/assets/logos/icon-1024.png" alt="Clipper Factory" width={32} height={32} className="h-8 w-8" />
           </Link>
 
           <nav className="hidden items-center gap-7 text-sm text-muted md:flex">
-            <a href="#features" className="transition hover:text-white">
+            <a href="#features" className="transition hover:text-fg">
               Features
             </a>
-            <a href="#pipeline" className="transition hover:text-white">
+            <a href="#pipeline" className="transition hover:text-fg">
               Pipeline
             </a>
-            <Link href="/dashboard" className="transition hover:text-white">
+            <Link href="/dashboard" className="transition hover:text-fg">
               Dashboard
             </Link>
           </nav>
 
-          <Link href="/dashboard" className="btn btn-primary btn-sm">
-            Open dashboard
-            <ArrowRight className="h-3.5 w-3.5" />
-          </Link>
+          <div className="flex items-center gap-2.5">
+            <ThemeToggle />
+            <Link href="/dashboard" className="btn btn-primary btn-sm">
+              Open dashboard
+              <ArrowRight className="h-3.5 w-3.5" />
+            </Link>
+          </div>
         </div>
       </header>
 
-      <main>
+      {/* The header is fixed, so main carries the offset it used to occupy. */}
+      <main className="mt-16">
         <section className="mx-auto grid w-full max-w-6xl items-center gap-14 px-5 pb-20 pt-16 lg:grid-cols-[1.05fr_0.95fr] lg:pt-24">
           <div>
             <span className="pill">
@@ -186,7 +191,7 @@ export default function LandingPage() {
               </a>
             </div>
 
-            <dl className="mt-12 grid max-w-md grid-cols-3 gap-6 border-t border-white/5 pt-6">
+            <dl className="mt-12 grid max-w-md grid-cols-3 gap-6 border-t border-line/60 pt-6">
               {[
                 ['1080×1920', 'Vertical output'],
                 ['2 / day', 'Scheduled slots'],
@@ -194,7 +199,7 @@ export default function LandingPage() {
               ].map(([value, label]) => (
                 <div key={label}>
                   <dt className="text-lg font-semibold tracking-tight">{value}</dt>
-                  <dd className="mt-0.5 text-[11px] uppercase tracking-wider text-zinc-500">{label}</dd>
+                  <dd className="mt-0.5 text-[11px] uppercase tracking-wider text-subtle">{label}</dd>
                 </div>
               ))}
             </dl>
@@ -202,8 +207,8 @@ export default function LandingPage() {
 
           <div className="relative mx-auto w-full max-w-[320px]">
             <div className="absolute -inset-6 -z-10 rounded-[3rem] bg-brand/10 blur-2xl" />
-            <div className="rounded-[2.2rem] border border-white/10 bg-surface p-2 shadow-2xl">
-              <div className="relative aspect-[9/16] overflow-hidden rounded-[1.7rem] bg-gradient-to-b from-[#1d316b] via-[#121a33] to-[#0a0a0b]">
+            <div className="rounded-[2.2rem] border border-line bg-surface p-2 shadow-2xl">
+              <div className="relative aspect-[9/16] overflow-hidden rounded-[1.7rem] bg-gradient-to-b from-[#60433d] via-[#382a28] to-[#211b1a]">
                 <div className="absolute inset-x-0 top-0 flex items-center justify-between p-3 text-[10px] font-medium">
                   <span className="rounded-full bg-black/50 px-2 py-1 text-white/90">9:16 · 34s</span>
                   <span className="rounded-full bg-black/50 px-2 py-1 text-[#FFD700]">🔥 92</span>
@@ -225,18 +230,18 @@ export default function LandingPage() {
               </div>
             </div>
 
-            <div className="absolute -left-6 top-16 hidden rounded-lg border border-white/10 bg-surface/90 px-3 py-2 text-[11px] shadow-xl backdrop-blur sm:block">
+            <div className="absolute -left-6 top-16 hidden rounded-lg border border-line bg-surface/90 px-3 py-2 text-[11px] shadow-xl backdrop-blur sm:block">
               <span className="text-muted">Queued</span>
-              <b className="ml-1.5 text-white">10 clips</b>
+              <b className="ml-1.5 text-fg">10 clips</b>
             </div>
-            <div className="absolute -right-4 bottom-24 hidden rounded-lg border border-white/10 bg-surface/90 px-3 py-2 text-[11px] shadow-xl backdrop-blur sm:block">
+            <div className="absolute -right-4 bottom-24 hidden rounded-lg border border-line bg-surface/90 px-3 py-2 text-[11px] shadow-xl backdrop-blur sm:block">
               <span className="text-muted">Next post</span>
-              <b className="ml-1.5 text-white">19:00</b>
+              <b className="ml-1.5 text-fg">19:00</b>
             </div>
           </div>
         </section>
 
-        <section id="features" className="border-t border-white/5 py-16 sm:py-20">
+        <section id="features" className="scroll-mt-20 border-t border-line/60 py-16 sm:py-20">
           <div className="mx-auto w-full max-w-6xl px-5">
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
@@ -261,7 +266,7 @@ export default function LandingPage() {
                   <span className="inline-flex h-9 w-9 items-center justify-center rounded-lg bg-brand/15 text-brand">
                     <Icon className="h-4 w-4" />
                   </span>
-                  <span className="text-[11px] font-semibold tracking-[0.2em] text-zinc-600">{n}</span>
+                  <span className="text-[11px] font-semibold tracking-[0.2em] text-subtle/80">{n}</span>
                 </div>
 
                 <h3 className="mt-5 text-base font-semibold tracking-tight">{title}</h3>
@@ -273,7 +278,7 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section id="pipeline" className="border-t border-white/5 py-16 sm:py-20">
+        <section id="pipeline" className="scroll-mt-20 border-t border-line/60 py-16 sm:py-20">
           <div className="mx-auto grid w-full max-w-6xl gap-10 px-5 lg:grid-cols-[0.9fr_1.1fr]">
             <div>
               <p className="label text-brand">Under the hood</p>
@@ -299,7 +304,7 @@ export default function LandingPage() {
                 ['Queue & publish', 'Two slots a day, Instagram Reels and TikTok with a Telegram fallback.'],
               ].map(([title, body], i) => (
                 <li key={title} className="card flex gap-4 p-4">
-                  <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white/[0.04] text-[11px] font-bold text-muted">
+                  <span className="mt-0.5 inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-wash text-[11px] font-bold text-muted">
                     0{i + 1}
                   </span>
                   <div>
@@ -312,10 +317,10 @@ export default function LandingPage() {
           </div>
         </section>
 
-        <section className="border-t border-white/5 py-16">
+        <section className="border-t border-line/60 py-16">
           <div className="mx-auto w-full max-w-6xl px-5">
             <div className="card relative overflow-hidden p-8 text-center sm:p-12">
-              <div className="pointer-events-none absolute inset-x-0 -top-24 h-48 bg-[radial-gradient(50%_60%_at_50%_50%,rgba(47,128,237,0.28),transparent_70%)]" />
+              <div className="pointer-events-none absolute inset-x-0 -top-24 h-48 bg-[radial-gradient(50%_60%_at_50%_50%,rgb(var(--brand-rgb)/0.28),transparent_70%)]" />
               <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">Your next ten shorts are one paste away.</h2>
               <p className="mx-auto mt-3 max-w-md text-sm text-muted">
                 Sign in with your dashboard credentials and drop a link. The first clips land in the queue
@@ -330,14 +335,14 @@ export default function LandingPage() {
         </section>
       </main>
 
-      <footer className="border-t border-white/5 py-10">
-        <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-4 px-5 text-xs text-zinc-500 sm:flex-row">
-          <p className="font-medium text-zinc-400">Clipper Factory</p>
+      <footer className="border-t border-line/60 py-10">
+        <div className="mx-auto flex w-full max-w-6xl flex-col items-center justify-between gap-4 px-5 text-xs text-subtle sm:flex-row">
+          <p className="font-medium text-muted">Clipper Factory</p>
           <div className="flex items-center gap-6">
-            <Link href="/dashboard" className="transition hover:text-white">
+            <Link href="/dashboard" className="transition hover:text-fg">
               Dashboard
             </Link>
-            <Link href="/dashboard/settings" className="transition hover:text-white">
+            <Link href="/dashboard/settings" className="transition hover:text-fg">
               Settings
             </Link>
             <span>/api/health</span>

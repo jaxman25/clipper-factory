@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Bot, Check, Send } from 'lucide-react';
-import ActivityFeed from '@/components/studio/ActivityFeed';
+import ActivityFeed, { ClearLogsButton, RestoreLogsButton } from '@/components/studio/ActivityFeed';
 import { EmptyState, PageHeader, SectionCard, StatCard } from '@/components/studio/ui';
 import { useStudio } from '@/components/studio/StudioProvider';
 import { cn } from '@/lib/cn';
@@ -101,7 +101,7 @@ export default function BotPage() {
               description="Generate a clip run first — queued clips appear here."
             />
           ) : (
-            <ul className="divide-y divide-white/5">
+            <ul className="divide-y divide-line/60">
               {clips.slice(0, 5).map((clip) => (
                 <li key={clip.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
                   <img
@@ -109,11 +109,11 @@ export default function BotPage() {
                     alt=""
                     width={36}
                     height={52}
-                    className="h-[52px] w-9 shrink-0 rounded-md border border-white/10 object-cover"
+                    className="h-[52px] w-9 shrink-0 rounded-md border border-line object-cover"
                   />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-medium">{clip.hook || clip.title || clip.id}</p>
-                    <p className="mt-0.5 text-[11px] text-zinc-500">
+                    <p className="mt-0.5 text-[11px] text-subtle">
                       {Number(clip.duration || 0).toFixed(0)}s · 🔥 {Math.round(clip.viral_score || 0)}
                     </p>
                   </div>
@@ -136,10 +136,10 @@ export default function BotPage() {
           <ul className="space-y-3">
             {COMMANDS.map(([command, description]) => (
               <li key={command}>
-                <code className="rounded bg-white/[0.05] px-1.5 py-0.5 font-mono text-[11px] text-brand">
+                <code className="rounded bg-wash px-1.5 py-0.5 font-mono text-[11px] text-brand">
                   {command}
                 </code>
-                <p className="mt-1 text-[11px] leading-relaxed text-zinc-500">{description}</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-subtle">{description}</p>
               </li>
             ))}
           </ul>
@@ -150,15 +150,19 @@ export default function BotPage() {
         title="Bot activity"
         description="Shared worker log — Telegram, scheduler and render events"
         actions={
-          <span
-            className={cn(
-              'inline-flex items-center gap-1.5 text-[11px]',
-              botReady ? 'text-emerald-400' : 'text-amber-400'
-            )}
-          >
-            <span className={cn('h-1.5 w-1.5 rounded-full', botReady ? 'bg-emerald-400' : 'bg-amber-400')} />
-            {botReady ? 'token present' : 'token missing'}
-          </span>
+          <>
+            <span
+              className={cn(
+                'inline-flex items-center gap-1.5 text-[11px]',
+                botReady ? 'text-ok' : 'text-warn'
+              )}
+            >
+              <span className={cn('h-1.5 w-1.5 rounded-full', botReady ? 'bg-emerald-400' : 'bg-amber-400')} />
+              {botReady ? 'token present' : 'token missing'}
+            </span>
+            <ClearLogsButton />
+            <RestoreLogsButton />
+          </>
         }
       >
         <ActivityFeed limit={12} />

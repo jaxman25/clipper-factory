@@ -1,5 +1,6 @@
 'use client';
 
+import { usePathname } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 const EMPTY = {
@@ -15,8 +16,10 @@ const EMPTY = {
 const StudioContext = createContext(null);
 
 export function StudioProvider({ children }) {
+  const pathname = usePathname();
   const [data, setData] = useState(EMPTY);
   const [health, setHealth] = useState(null);
+  const [settings, setSettings] = useState(null);
   const [job, setJob] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [mode, setMode] = useState('viral');
@@ -32,12 +35,14 @@ export function StudioProvider({ children }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [clipsRes, healthRes] = await Promise.all([
+      const [clipsRes, healthRes, settingsRes] = await Promise.all([
         fetch('/api/clips', { cache: 'no-store' }),
         fetch('/api/health', { cache: 'no-store' }),
+        fetch('/api/settings', { cache: 'no-store' }),
       ]);
       if (clipsRes.ok) setData(await clipsRes.json());
       if (healthRes.ok) setHealth(await healthRes.json());
+      if (settingsRes.ok) setSettings(await settingsRes.json());
     } catch (err) {
       notify(`Could not load state: ${err.message}`);
     } finally {
@@ -73,14 +78,44 @@ export function StudioProvider({ children }) {
   }, []);
 
   useEffect(() => {
-    refresh();
-    refreshJobs();
     const timer = setInterval(() => {
       refresh();
       refreshJobs();
     }, 20000);
     return () => clearInterval(timer);
   }, [refresh, refreshJobs]);
+
+  // Re-fetch on every dashboard navigation. The provider lives in the layout
+  // and therefore survives route changes, so without this a page can mount
+  // with whatever was captured before the last save (e.g. returning to the
+  // overview right after editing posting times on the settings page).
+  useEffect(() => {
+    refresh();
+    refreshJobs();
+  }, [pathname, refresh, refreshJobs]);
+
+  // Write confirmed settings straight into shared state so every consumer
+  // (overview header, posting calendar, generate panel) updates instantly,
+  // without waiting for the next poll or another GET round-trip.
+  const applyConfig = useCallback((patch = {}) => {
+    setData((current) => ({
+      ...current,
+      config: {
+        ...current.config,
+        ...patch,
+        ...(patch.platforms
+          ? { platforms: { ...current.config?.platforms, ...patch.platforms } }
+          : null),
+      },
+    }));
+    setHealth((current) => {
+      if (!current) return current;
+      const next = { ...current };
+      if (patch.posting_times !== undefined) next.posting_times = patch.posting_times;
+      if (patch.timezone !== undefined) next.timezone = patch.timezone;
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (job?.status !== 'running') return undefined;
@@ -166,19 +201,41 @@ export function StudioProvider({ children }) {
       postingTimes: data.config?.posting_times?.length ? data.config.posting_times : ['19:00', '21:00'],
       avgScore,
       health,
+      // Redacted integration status ({configured, hint} per key) so the
+      // overview can show what is wired up without a second fetch.
+      tokens: settings?.tokens || {},
+      runtime: settings?.runtime || null,
       loading,
       job,
       jobs,
       setJob,
       refresh,
       refreshJobs,
+      applyConfig,
       startGeneration,
       reschedule,
       notify,
       mode,
       setMode,
     }),
-    [data, clips, posted, avgScore, health, loading, job, jobs, refresh, refreshJobs, startGeneration, reschedule, notify]
+    [
+      data,
+      clips,
+      posted,
+      avgScore,
+      health,
+      settings,
+      loading,
+      job,
+      jobs,
+      refresh,
+      refreshJobs,
+      applyConfig,
+      startGeneration,
+      reschedule,
+      notify,
+      mode,
+    ]
   );
 
   return (
@@ -187,7 +244,7 @@ export function StudioProvider({ children }) {
       {toastText && (
         <div
           role="status"
-          className="fixed bottom-6 left-1/2 z-[60] w-[min(92vw,420px)] -translate-x-1/2 animate-rise rounded-xl border border-white/10 border-l-2 border-l-brand bg-raised px-4 py-3 text-sm text-white shadow-2xl"
+          className="fixed bottom-6 left-1/2 z-[60] w-[min(92vw,420px)] -translate-x-1/2 animate-rise rounded-xl border border-line border-l-2 border-l-brand bg-raised px-4 py-3 text-sm text-fg shadow-2xl"
         >
           {toastText}
         </div>

@@ -57,7 +57,7 @@ export default function QueuePage() {
       </SectionCard>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex rounded-full border border-white/10 bg-surface p-1">
+        <div className="inline-flex rounded-full border border-line bg-surface p-1">
           {[
             ['queue', `Queued (${clips.length})`],
             ['posted', `Posted (${posted.length})`],
@@ -68,14 +68,14 @@ export default function QueuePage() {
               onClick={() => setTab(key)}
               className={cn(
                 'rounded-full px-4 py-1.5 text-xs font-semibold transition',
-                tab === key ? 'bg-brand text-white' : 'text-muted hover:text-white'
+                tab === key ? 'bg-brand text-fg' : 'text-muted hover:text-fg'
               )}
             >
               {label}
             </button>
           ))}
         </div>
-        <p className="text-[11px] text-zinc-500">Captions and slots save instantly.</p>
+        <p className="text-[11px] text-subtle">Captions and slots save instantly.</p>
       </div>
 
       {loading ? (
@@ -111,15 +111,15 @@ export default function QueuePage() {
 
       {resetOpen && (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/60 p-6" role="dialog" aria-modal="true">
-          <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-surface p-6 shadow-2xl">
+          <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-6 shadow-2xl">
             <div className="flex flex-col gap-4">
               <div className="flex items-start gap-3">
-                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-500/15 text-red-300">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-500/15 text-danger">
                   <AlertTriangle className="h-5 w-5" />
                 </span>
                 <div>
-                  <h2 className="text-lg font-bold text-white">Reset the entire system?</h2>
-                  <p className="mt-1 text-sm text-zinc-400">
+                  <h2 className="text-lg font-bold text-fg">Reset the entire system?</h2>
+                  <p className="mt-1 text-sm text-muted">
                     This will delete all queued and posted clips, remove all generated video and
                     thumbnail files, clear the job database, and wipe the logs. This action
                     <b>cannot be undone</b>.

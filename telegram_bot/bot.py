@@ -9,6 +9,7 @@ Commands
 /postnow   post the oldest queued clip immediately
 /settings  show slots, tokens and queue health
 /cancel    stop the running generation job
+/clearlogs wipe the activity log tail and the job log files
 
 On Render the bot is started by ``npm run start:render`` alongside Next.js. Set
 ACF_ENABLE_SCHEDULER=1 to run the 19:00/21:00 EAT poster inside this process
@@ -32,6 +33,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from telegram import BotCommand, Update  # noqa: E402
+from telegram import __version__ as PTB_VERSION  # noqa: E402
 from telegram.constants import ParseMode  # noqa: E402
 from telegram.error import TelegramError  # noqa: E402
 from telegram.ext import (  # noqa: E402
@@ -247,7 +249,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/queue — show and pin the queue\n"
         "/postnow [clip-id] — publish the oldest clip now\n"
         "/settings — slots, tokens and health\n"
-        "/cancel — stop the running job\n\n"
+        "/cancel — stop the running job\n"
+        "/clearlogs — wipe the activity log and job logs\n\n"
         f"Your chat id: `{chat_id}`\n"
         "Set TELEGRAM_CHAT_ID to this value so scheduled posts reach you."
     )
@@ -369,6 +372,22 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await reply(update, "🛑 Generation cancelled.")
 
 
+async def cmd_clearlogs(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if "yes" not in [arg.lower() for arg in context.args]:
+        await reply(
+            update,
+            "🧹 This empties the dashboard's activity log and deletes every job "
+            "log file. Reply /clearlogs yes to confirm.",
+        )
+        return
+    result = common.clear_logs()
+    await reply(
+        update,
+        f"🧹 Logs cleared — activity log emptied, "
+        f"{result['job_logs']} job log file(s) deleted.",
+    )
+
+
 async def on_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     url = youtube_url(update.message.text if update.message else "")
     if url:
@@ -411,6 +430,7 @@ async def post_init(app: Application) -> None:
             BotCommand("postnow", "Post the oldest clip now"),
             BotCommand("settings", "Show slots and integrations"),
             BotCommand("cancel", "Cancel the running job"),
+            BotCommand("clearlogs", "Wipe activity and job logs"),
             BotCommand("start", "Welcome and chat id"),
         ])
     except TelegramError as exc:
@@ -437,7 +457,39 @@ async def post_init(app: Application) -> None:
         common.warn(f"Could not send startup notice: {exc}")
 
 
+MIN_PTB = (21, 0)
+
+
+def library_version_error(installed: str = PTB_VERSION) -> str | None:
+    """Return a hint when python-telegram-bot is older than the bot needs.
+
+    PTB 21 rebuilt ``Updater`` with ``__slots__``; running this bot on a 20.x
+    install dies deep inside ``Application.build()`` with an opaque
+    ``AttributeError: 'Updater' object has no attribute
+    '_Updater__polling_cleanup_cb'``. Catching it up front turns that traceback
+    into one actionable line.
+    """
+    parts: list[int] = []
+    for chunk in installed.split(".")[:2]:
+        digits = "".join(ch for ch in chunk if ch.isdigit())
+        parts.append(int(digits) if digits else 0)
+    while len(parts) < 2:
+        parts.append(0)
+    if tuple(parts) >= MIN_PTB:
+        return None
+    return (
+        f"python-telegram-bot {installed} is too old for this bot: the updater API "
+        f"changed in {MIN_PTB[0]}.{MIN_PTB[1]}. Install the pinned release with\n"
+        f"    pip install -r requirements.txt"
+    )
+
+
 def main() -> int:
+    version_problem = library_version_error()
+    if version_problem:
+        print(version_problem, file=sys.stderr)
+        return 2
+
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
     if not token:
         print("TELEGRAM_BOT_TOKEN is not set. Add it to .env (see README-RENDER.md).", file=sys.stderr)
@@ -464,6 +516,7 @@ def main() -> int:
     app.add_handler(CommandHandler("postnow", cmd_postnow))
     app.add_handler(CommandHandler("settings", cmd_settings))
     app.add_handler(CommandHandler("cancel", cmd_cancel))
+    app.add_handler(CommandHandler("clearlogs", cmd_clearlogs))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_plain_text))
     app.add_error_handler(on_error)
 

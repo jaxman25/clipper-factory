@@ -12,13 +12,25 @@ import {
 } from 'lucide-react';
 import GeneratePanel from '@/components/studio/GeneratePanel';
 import ScheduleBoard from '@/components/studio/ScheduleBoard';
-import ActivityFeed from '@/components/studio/ActivityFeed';
+import ActivityFeed, { ClearLogsButton, RestoreLogsButton } from '@/components/studio/ActivityFeed';
 import { EmptyState, PageHeader, SectionCard, StatCard } from '@/components/studio/ui';
 import { useStudio } from '@/components/studio/StudioProvider';
+import { cn } from '@/lib/cn';
 import { formatInTZ } from '@/lib/time';
 
+// Each integration needs every key before it can run; the overview shows
+// connected / incomplete / not set so a saved token is visible straight away.
+const INTEGRATIONS = [
+  { label: 'Telegram', keys: ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID'] },
+  { label: 'Instagram', keys: ['IG_USER_ID', 'IG_ACCESS_TOKEN'] },
+  { label: 'TikTok', keys: ['TIKTOK_AUTH_B64'] },
+  { label: 'YouTube', keys: ['YOUTUBE_CLIENT_ID', 'YOUTUBE_CLIENT_SECRET', 'YOUTUBE_REFRESH_TOKEN'] },
+  { label: 'B-roll', keys: ['PIXABAY_API_KEY'] },
+];
+
 export default function OverviewPage() {
-  const { clips, posted, avgScore, loading, timeZone, postingTimes, health, refresh } = useStudio();
+  const { clips, posted, avgScore, loading, timeZone, postingTimes, health, refresh, tokens } =
+    useStudio();
   const next = clips[0]?.scheduled_for;
   const upNext = clips.slice(0, 3);
 
@@ -93,7 +105,7 @@ export default function OverviewPage() {
                 description="Paste a YouTube link above. Ten clips land in the queue in about 5–15 minutes."
               />
             ) : (
-              <ul className="divide-y divide-white/5">
+              <ul className="divide-y divide-line/60">
                 {upNext.map((clip) => (
                   <li key={clip.id} className="flex items-center gap-3 py-3 first:pt-0 last:pb-0">
                     <img
@@ -101,13 +113,13 @@ export default function OverviewPage() {
                       alt=""
                       width={40}
                       height={56}
-                      className="h-14 w-10 shrink-0 rounded-md border border-white/10 object-cover"
+                      className="h-14 w-10 shrink-0 rounded-md border border-line object-cover"
                     />
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] font-medium text-zinc-100">
+                      <p className="truncate text-[13px] font-medium text-fg">
                         {clip.hook || clip.title || clip.id}
                       </p>
-                      <p className="mt-0.5 text-[11px] text-zinc-500">
+                      <p className="mt-0.5 text-[11px] text-subtle">
                         {formatInTZ(clip.scheduled_for, timeZone)} · 🔥 {Math.round(clip.viral_score || 0)}
                       </p>
                     </div>
@@ -124,10 +136,14 @@ export default function OverviewPage() {
             title="Recent activity"
             description="Worker log tail"
             actions={
-              <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500">
-                <Activity className="h-3 w-3" />
-                live
-              </span>
+              <>
+                <span className="inline-flex items-center gap-1.5 text-[11px] text-subtle">
+                  <Activity className="h-3 w-3" />
+                  live
+                </span>
+                <ClearLogsButton />
+                <RestoreLogsButton />
+              </>
             }
           >
             <ActivityFeed limit={9} />
@@ -143,11 +159,44 @@ export default function OverviewPage() {
                 ['Running job', health?.running_job || 'none'],
               ].map(([label, value]) => (
                 <div key={label} className="flex items-center justify-between gap-3">
-                  <dt className="text-zinc-500">{label}</dt>
-                  <dd className="truncate font-medium text-zinc-200">{value}</dd>
+                  <dt className="text-subtle">{label}</dt>
+                  <dd className="truncate font-medium text-fg/90">{value}</dd>
                 </div>
               ))}
             </dl>
+            <div className="mt-4 border-t border-line/60 pt-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-subtle">
+                  Integrations
+                </p>
+                <Link href="/dashboard/settings" className="text-[11px] text-brand hover:underline">
+                  Manage
+                </Link>
+              </div>
+              <ul className="mt-2 space-y-1.5 text-[12px]">
+                {INTEGRATIONS.map(({ label, keys }) => {
+                  const ready = keys.every((key) => tokens?.[key]?.configured);
+                  const partial = !ready && keys.some((key) => tokens?.[key]?.configured);
+                  return (
+                    <li key={label} className="flex items-center justify-between gap-3">
+                      <span className="flex items-center gap-2 text-muted">
+                        <span
+                          className={cn(
+                            'h-1.5 w-1.5 rounded-full',
+                            ready ? 'bg-ok' : partial ? 'bg-warn' : 'bg-line'
+                          )}
+                        />
+                        {label}
+                      </span>
+                      <span className="text-[11px] text-subtle">
+                        {ready ? 'connected' : partial ? 'incomplete' : 'not set'}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
             <a
               href="/api/health"
               target="_blank"

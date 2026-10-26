@@ -2,7 +2,7 @@ yt-dlp
 faster-whisper
 opencv-python-headless
 mediapipe
-python-telegram-bot==20.7
+python-telegram-bot==21.11.1
 requests
 python-dotenv
 apscheduler

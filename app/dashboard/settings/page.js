@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Check, KeyRound, Loader2, Save, Trash2 } from 'lucide-react';
-import ActivityFeed from '@/components/studio/ActivityFeed';
+import ActivityFeed, { ClearLogsButton, RestoreLogsButton } from '@/components/studio/ActivityFeed';
 import { PageHeader, SectionCard } from '@/components/studio/ui';
+import { useStudio } from '@/components/studio/StudioProvider';
 import { cn } from '@/lib/cn';
 
 const TOKEN_FIELDS = [
@@ -28,7 +29,7 @@ function Switch({ checked, onChange, label }) {
       onClick={() => onChange(!checked)}
       className={cn(
         'relative h-6 w-11 shrink-0 rounded-full transition',
-        checked ? 'bg-brand' : 'bg-white/15'
+        checked ? 'bg-brand' : 'bg-wash-strong'
       )}
     >
       <span
@@ -42,6 +43,7 @@ function Switch({ checked, onChange, label }) {
 }
 
 export default function SettingsPage() {
+  const { applyConfig, refresh } = useStudio();
   const [data, setData] = useState(null);
   const [form, setForm] = useState(null);
   const [tokenValues, setTokenValues] = useState({});
@@ -79,7 +81,6 @@ export default function SettingsPage() {
   useEffect(() => {
     load();
   }, [load]);
-
   function update(field, value) {
     setForm((current) => ({ ...current, [field]: value }));
   }
@@ -92,6 +93,7 @@ export default function SettingsPage() {
     try {
       const response = await fetch('/api/settings', {
         method: 'PUT',
+        cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           settings: {
@@ -112,6 +114,11 @@ export default function SettingsPage() {
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'Could not save settings');
+      // Push the confirmed values into shared state and re-pull queue/health so
+      // the overview, calendar and generate panel are already current when the
+      // user navigates back — no waiting for the 20s poll.
+      applyConfig(payload.saved || {});
+      await refresh();
       setNote({ kind: 'ok', text: 'Settings saved — new runs and the scheduler pick them up immediately.' });
       setData((current) =>
         current ? { ...current, config: { ...current.config, ...payload.saved } } : current
@@ -134,6 +141,7 @@ export default function SettingsPage() {
     try {
       const response = await fetch('/api/settings', {
         method: 'PUT',
+        cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ tokens: { [key]: value } }),
       });
@@ -141,6 +149,7 @@ export default function SettingsPage() {
       if (!response.ok) throw new Error(payload.error || 'Could not save token');
       setData((current) => (current ? { ...current, tokens: payload.tokens } : current));
       setTokenValues((current) => ({ ...current, [key]: '' }));
+      await refresh();
       setNote({ kind: 'ok', text: `${key} saved. Restart the bot to change its own polling token.` });
     } catch (err) {
       setNote({ kind: 'error', text: err.message });
@@ -155,12 +164,14 @@ export default function SettingsPage() {
     try {
       const response = await fetch('/api/settings', {
         method: 'PUT',
+        cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ clearTokens: [key] }),
       });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || 'Could not clear token');
       setData((current) => (current ? { ...current, tokens: payload.tokens } : current));
+      await refresh();
       setNote({ kind: 'ok', text: `${key} cleared from dashboard settings.` });
     } catch (err) {
       setNote({ kind: 'error', text: err.message });
@@ -190,8 +201,8 @@ export default function SettingsPage() {
           className={cn(
             'rounded-lg border px-3.5 py-2.5 text-[12px]',
             note.kind === 'error'
-              ? 'border-red-500/30 bg-red-500/10 text-red-300'
-              : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+              ? 'border-red-500/30 bg-red-500/10 text-danger'
+              : 'border-emerald-500/30 bg-emerald-500/10 text-ok'
           )}
         >
           {note.text}
@@ -261,7 +272,7 @@ export default function SettingsPage() {
                     onChange={(event) => update(key, event.target.value)}
                     className="input mt-1.5 tabular-nums"
                   />
-                  <p className="mt-1 text-[10px] text-zinc-600">{hint}</p>
+                  <p className="mt-1 text-[10px] text-subtle/80">{hint}</p>
                 </div>
               ))}
             </div>
@@ -303,7 +314,7 @@ export default function SettingsPage() {
                     type="color"
                     value={form.caption_color}
                     onChange={(event) => update('caption_color', event.target.value)}
-                    className="h-10 w-12 cursor-pointer rounded-lg border border-white/10 bg-transparent"
+                    className="h-10 w-12 cursor-pointer rounded-lg border border-line bg-transparent"
                   />
                   <input
                     type="text"
@@ -324,11 +335,11 @@ export default function SettingsPage() {
               ].map(([key, label, hint]) => (
                 <div
                   key={key}
-                  className="flex items-center justify-between gap-4 rounded-lg border border-white/10 bg-white/[0.02] px-3.5 py-3"
+                  className="flex items-center justify-between gap-4 rounded-lg border border-line bg-wash px-3.5 py-3"
                 >
                   <div>
                     <p className="text-[13px] font-medium">{label}</p>
-                    <p className="mt-0.5 text-[11px] text-zinc-500">{hint}</p>
+                    <p className="mt-0.5 text-[11px] text-subtle">{hint}</p>
                   </div>
                   <Switch
                     checked={Boolean(form[key])}
@@ -354,16 +365,16 @@ export default function SettingsPage() {
             const status = data?.tokens?.[field.key];
             const configured = Boolean(status?.configured);
             return (
-              <div key={field.key} className="rounded-lg border border-white/10 bg-white/[0.02] p-3.5">
+              <div key={field.key} className="rounded-lg border border-line bg-wash p-3.5">
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <p className="text-[13px] font-medium">{field.label}</p>
-                    <p className="mt-0.5 text-[11px] text-zinc-500">{field.hint}</p>
+                    <p className="mt-0.5 text-[11px] text-subtle">{field.hint}</p>
                   </div>
                   <span
                     className={cn(
                       'pill shrink-0',
-                      configured ? 'border-emerald-500/30 text-emerald-300' : 'text-zinc-500'
+                      configured ? 'border-emerald-500/30 text-ok' : 'text-subtle'
                     )}
                   >
                     {configured ? <Check className="h-3 w-3" /> : <KeyRound className="h-3 w-3" />}
@@ -396,7 +407,7 @@ export default function SettingsPage() {
                       onClick={() => clearToken(field.key)}
                       disabled={busy === field.key}
                       aria-label={`Clear ${field.label}`}
-                      className="btn btn-sm shrink-0 text-red-400"
+                      className="btn btn-sm shrink-0 text-danger"
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -419,14 +430,23 @@ export default function SettingsPage() {
               ['Queue / posted', `${data?.queue ?? 0} / ${data?.posted ?? 0}`],
             ].map(([label, value]) => (
               <div key={label} className="flex items-center justify-between gap-3">
-                <dt className="text-zinc-500">{label}</dt>
-                <dd className="truncate font-mono text-[11px] text-zinc-300">{value}</dd>
+                <dt className="text-subtle">{label}</dt>
+                <dd className="truncate font-mono text-[11px] text-fg/80">{value}</dd>
               </div>
             ))}
           </dl>
         </SectionCard>
 
-        <SectionCard title="Recent activity" description="Worker log tail">
+        <SectionCard
+          title="Recent activity"
+          description="Worker log tail"
+          actions={
+            <>
+              <ClearLogsButton />
+              <RestoreLogsButton />
+            </>
+          }
+        >
           <ActivityFeed limit={8} />
         </SectionCard>
       </div>

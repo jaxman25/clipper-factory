@@ -51,7 +51,7 @@ export default function ScheduleBoard() {
       <div className="overflow-x-auto pb-1">
         <div className="min-w-[760px]">
           <div className="grid grid-cols-[68px_repeat(7,minmax(0,1fr))] gap-2">
-            <div className="pb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-600">
+            <div className="pb-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-subtle/80">
               Slot · {timeZone.split('/').pop()}
             </div>
             {days.map((day) => (
@@ -59,7 +59,7 @@ export default function ScheduleBoard() {
                 key={day.key}
                 className={cn(
                   'pb-2 text-center text-[11px] font-semibold',
-                  day.isToday ? 'text-white' : 'text-zinc-500'
+                  day.isToday ? 'text-fg' : 'text-subtle'
                 )}
               >
                 {day.label}
@@ -69,7 +69,7 @@ export default function ScheduleBoard() {
 
             {slots.map((slot) => (
               <div key={slot} className="contents">
-                <div className="flex items-center pr-2 text-xs font-semibold tabular-nums text-zinc-400">
+                <div className="flex items-center pr-2 text-xs font-semibold tabular-nums text-muted">
                   {slot}
                 </div>
                 {days.map((day) => {
@@ -93,11 +93,11 @@ export default function ScheduleBoard() {
                         'min-h-[76px] rounded-lg border border-dashed p-1.5 transition',
                         isHover
                           ? 'border-brand bg-brand/10'
-                          : 'border-white/10 bg-white/[0.015] hover:border-white/20'
+                          : 'border-line bg-wash hover:border-line'
                       )}
                     >
                       {cellClips.length === 0 ? (
-                        <span className="flex h-full items-center justify-center text-[10px] text-zinc-700">
+                        <span className="flex h-full items-center justify-center text-[10px] text-subtle/70">
                           empty
                         </span>
                       ) : (
@@ -113,16 +113,16 @@ export default function ScheduleBoard() {
                               }}
                               title={clip.hook || clip.title || clip.id}
                               className={cn(
-                                'cursor-grab rounded-md border-l-2 bg-white/[0.05] px-1.5 py-1 text-[10px] leading-tight transition active:cursor-grabbing',
+                                'cursor-grab rounded-md border-l-2 bg-wash px-1.5 py-1 text-[10px] leading-tight transition active:cursor-grabbing',
                                 clip.state === 'posted'
                                   ? 'border-l-emerald-400/70 opacity-70'
-                                  : 'border-l-brand hover:bg-white/[0.09]'
+                                  : 'border-l-brand hover:bg-wash-strong'
                               )}
                             >
-                              <p className="line-clamp-2 font-medium text-zinc-200">
+                              <p className="line-clamp-2 font-medium text-fg/90">
                                 {clip.hook || clip.title || clip.id}
                               </p>
-                              <p className="mt-0.5 tabular-nums text-zinc-500">
+                              <p className="mt-0.5 tabular-nums text-subtle">
                                 🔥 {Math.round(clip.viral_score || 0)}
                               </p>
                             </div>
@@ -138,7 +138,7 @@ export default function ScheduleBoard() {
         </div>
       </div>
 
-      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-zinc-500">
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px] text-subtle">
         <span>Drag a clip onto another cell to move its slot.</span>
         {outside > 0 && (
           <span>

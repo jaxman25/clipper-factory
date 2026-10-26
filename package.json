@@ -4,11 +4,12 @@
   "private": true,
   "description": "Clipper Factory: YouTube in, scheduled vertical shorts out.",
   "scripts": {
-    "dev": "next dev -p 3000",
+    "dev": "node node_modules/kill-port/cli.js 3000 && npm test && next dev -p 3000",
     "build": "next build",
     "start": "node scripts/next-start.mjs",
     "start:render": "python3 telegram_bot/bot.py & npm run start",
     "lint": "next lint",
+    "test": "node --test \"tests/*.test.mjs\"",
     "assets": "node scripts/run-python.mjs scripts/make_assets.py",
     "logos": "node scripts/build-logos.mjs",
     "smoke": "node scripts/run-python.mjs scripts/smoke_render.py"
@@ -25,6 +26,7 @@
   },
   "devDependencies": {
     "autoprefixer": "^10.6.1",
+    "kill-port": "^2.0.1",
     "postcss": "^8.5.31",
     "sharp": "^0.35.5",
     "tailwindcss": "^3.4.17"

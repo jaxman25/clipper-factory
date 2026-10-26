@@ -1,26 +1,47 @@
+/**
+ * Semantic tokens resolve to CSS variables defined in app/globals.css.
+ *
+ * Palette #2 (warm coffee):
+ *   #211B1A → #382A28 → #60433D → #916B60 → #C1A094 → #EBD8CE
+ *
+ * Dark is the default; [data-theme='light'] re-points the same variables, so
+ * every utility below follows the active theme without conditional classes.
+ */
+const tone = (name) => `rgb(var(--${name}-rgb) / <alpha-value>)`;
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ['./app/**/*.{js,jsx}', './components/**/*.{js,jsx}', './lib/**/*.{js,jsx}'],
   theme: {
     extend: {
       colors: {
-        ink: '#0A0A0B',
-        surface: '#161618',
-        raised: '#1C1C1F',
-        line: 'rgba(255,255,255,0.10)',
-        muted: '#A1A1AA',
+        ink: tone('ink'),
+        rail: tone('rail'),
+        surface: tone('surface'),
+        raised: tone('raised'),
+        field: tone('field'),
+        line: tone('line'),
+        fg: tone('fg'),
+        muted: tone('muted'),
+        subtle: tone('subtle'),
+        onbrand: tone('onbrand'),
+        wash: 'var(--wash)',
+        'wash-strong': 'var(--wash-strong)',
         brand: {
-          DEFAULT: '#2F80ED',
-          dark: '#0F4CCF',
-          soft: 'rgba(47,128,237,0.14)',
+          DEFAULT: tone('brand'),
+          hover: tone('brand-hover'),
+          soft: 'var(--brand-soft)',
         },
+        danger: tone('danger'),
+        warn: tone('warn'),
+        ok: tone('ok'),
       },
       fontFamily: {
         sans: ['var(--font-sans)', 'Inter', 'ui-sans-serif', 'system-ui', 'Segoe UI', 'sans-serif'],
       },
       boxShadow: {
-        card: '0 1px 0 rgba(255,255,255,0.04) inset, 0 20px 40px -24px rgba(0,0,0,0.8)',
-        glow: '0 16px 40px -18px rgba(47,128,237,0.55)',
+        card: 'var(--shadow-card)',
+        glow: 'var(--shadow-glow)',
       },
       keyframes: {
         shimmer: {

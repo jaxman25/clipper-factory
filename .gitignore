@@ -4,6 +4,7 @@ out/
 build/
 dist/
 implementations/
+cookies.txt
 
 # Runtime media (never commit generated clips or sources)
 downloads/

@@ -12,7 +12,7 @@ function Switch({ checked, onChange, label }) {
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={`relative h-6 w-11 shrink-0 rounded-full transition ${checked ? 'bg-brand' : 'bg-white/15'}`}
+      className={`relative h-6 w-11 shrink-0 rounded-full transition ${checked ? 'bg-brand' : 'bg-wash-strong'}`}
     >
       <span
         className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${checked ? 'left-[22px]' : 'left-0.5'}`}
@@ -27,31 +27,31 @@ function Progress({ job, onClear, onCancel, onCanceling }) {
   const pct = Math.max(0, Math.min(100, Number(job.progress) || 0));
 
   return (
-    <div className="mt-5 rounded-xl border border-white/10 bg-black/20 p-4">
+    <div className="mt-5 rounded-xl border border-line bg-black/20 p-4">
       <div className="flex items-center justify-between gap-4 text-xs">
-        <span className="flex min-w-0 items-center gap-2 text-zinc-300">
+        <span className="flex min-w-0 items-center gap-2 text-fg/80">
           {running && <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-brand" />}
-          {failed && <AlertCircle className="h-3.5 w-3.5 shrink-0 text-red-400" />}
+          {failed && <AlertCircle className="h-3.5 w-3.5 shrink-0 text-danger" />}
           <span className="truncate">
-            <span className="font-mono text-[11px] text-zinc-500">{job.id}</span>
-            <span className="mx-2 text-zinc-700">/</span>
+            <span className="font-mono text-[11px] text-subtle">{job.id}</span>
+            <span className="mx-2 text-subtle/70">/</span>
             {job.message || job.stage || (running ? 'Working…' : 'Finished')}
           </span>
         </span>
         <div className="flex items-center gap-3">
-          <b className="tabular-nums text-white">{pct}%</b>
+          <b className="tabular-nums text-fg">{pct}%</b>
           {onClear && !running && (
-            <button type="button" onClick={onClear} className="text-[11px] text-zinc-500 hover:text-white">
+            <button type="button" onClick={onClear} className="text-[11px] text-subtle hover:text-fg">
               dismiss
             </button>
           )}
         </div>
       </div>
 
-      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
+      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-wash-strong">
         <div
           className={`h-full rounded-full transition-all duration-500 ${
-            failed ? 'bg-red-500' : 'bg-gradient-to-r from-brand to-brand-dark'
+            failed ? 'bg-red-500' : 'bg-gradient-to-r from-brand to-brand-hover'
           }`}
           style={{ width: `${failed ? 100 : pct}%` }}
         />
@@ -68,13 +68,13 @@ function Progress({ job, onClear, onCancel, onCanceling }) {
         </button>
       )}
 
-      {job.error && <p className="mt-3 text-[11px] leading-relaxed text-red-400">{job.error}</p>}
+      {job.error && <p className="mt-3 text-[11px] leading-relaxed text-danger">{job.error}</p>}
     </div>
   );
 }
 
 export default function GeneratePanel({ autoFocus = false }) {
-  const { config, job, setJob, startGeneration, notify, mode, setMode } = useStudio();
+  const { config, job, setJob, startGeneration, notify, mode, setMode, applyConfig } = useStudio();
   const [url, setUrl] = useState('');
   const [num, setNum] = useState(config?.shorts_per_video || 10);
   const [busy, setBusy] = useState(false);
@@ -87,13 +87,16 @@ export default function GeneratePanel({ autoFocus = false }) {
     try {
       const response = await fetch('/api/settings', {
         method: 'PUT',
+        cache: 'no-store',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ settings: { youtube_auto_post: value } }),
       });
       if (!response.ok) {
         setYoutubeAutoPost(!value);
         notify('Could not update auto-post setting');
+        return;
       }
+      applyConfig({ youtube_auto_post: value });
     } catch (err) {
       setYoutubeAutoPost(!value);
       notify(err.message);
@@ -143,7 +146,7 @@ export default function GeneratePanel({ autoFocus = false }) {
 
   return (
     <section className="card relative overflow-hidden">
-      <div className="pointer-events-none absolute inset-x-0 -top-32 h-56 bg-[radial-gradient(45%_60%_at_50%_60%,rgba(47,128,237,0.18),transparent_75%)]" />
+      <div className="pointer-events-none absolute inset-x-0 -top-32 h-56 bg-[radial-gradient(45%_60%_at_50%_60%,rgb(var(--brand-rgb)/0.18),transparent_75%)]" />
 
       <div className="relative p-5 sm:p-7">
         <div className="flex flex-wrap items-start justify-between gap-4">
@@ -161,7 +164,7 @@ export default function GeneratePanel({ autoFocus = false }) {
 
         <form onSubmit={submit} className="mt-6 flex flex-col gap-3 sm:flex-row sm:items-center">
           <div className="relative flex-1">
-            <Link2 className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
+            <Link2 className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-subtle" />
             <input
               id="youtube-url"
               type="url"
@@ -198,14 +201,14 @@ export default function GeneratePanel({ autoFocus = false }) {
 
         {job && <Progress job={job} onClear={() => setJob(null)} onCancel={cancelJob} onCanceling={canceling} />}
 
-        <div className="mt-4 flex items-center justify-between gap-4 rounded-lg bg-white/5 p-3">
-          <span className="text-xs text-zinc-400">Clip mode</span>
+        <div className="mt-4 flex items-center justify-between gap-4 rounded-lg bg-wash p-3">
+          <span className="text-xs text-muted">Clip mode</span>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => setMode('viral')}
               className={`relative w-full rounded-md px-4 py-2 text-sm font-medium transition ${
-                mode === 'viral' ? 'bg-brand text-white' : 'bg-white/10 text-zinc-400 hover:text-white'
+                mode === 'viral' ? 'bg-brand text-fg' : 'bg-wash-strong text-muted hover:text-fg'
               } ${running ? 'pointer-events-none opacity-50' : ''}`}
             >
               Viral Moments
@@ -214,7 +217,7 @@ export default function GeneratePanel({ autoFocus = false }) {
               type="button"
               onClick={() => setMode('equal')}
               className={`relative w-full rounded-md px-4 py-2 text-sm font-medium transition ${
-                mode === 'equal' ? 'bg-brand text-white' : 'bg-white/10 text-zinc-400 hover:text-white'
+                mode === 'equal' ? 'bg-brand text-fg' : 'bg-wash-strong text-muted hover:text-fg'
               } ${running ? 'pointer-events-none opacity-50' : ''}`}
             >
               Equal Slices
@@ -222,21 +225,21 @@ export default function GeneratePanel({ autoFocus = false }) {
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-lg bg-white/5 p-3">
-          <span className="text-xs text-zinc-400">Auto-post</span>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-lg bg-wash p-3">
+          <span className="text-xs text-muted">Auto-post</span>
           <div className="flex flex-wrap items-center gap-3">
             <Switch
               checked={youtubeAutoPost}
               onChange={saveYoutubeAutoPost}
               label="Auto-post to YouTube Shorts"
             />
-            <span className="text-xs text-zinc-400">
+            <span className="text-xs text-muted">
               {youtubeAutoPost ? 'On' : 'Off'}
             </span>
           </div>
         </div>
 
-        <p className="mt-4 text-[11px] text-zinc-500">
+        <p className="mt-4 text-[11px] text-subtle">
           {config?.shorts_per_video || 10} shorts per run · one job at a time
         </p>
       </div>

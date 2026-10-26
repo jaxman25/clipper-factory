@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import { useStudio } from '@/components/studio/StudioProvider';
+import ThemeToggle from '@/components/studio/ThemeToggle';
 import { cn } from '@/lib/cn';
 
 const NAV = [
@@ -64,9 +65,9 @@ function StatusFooter() {
 
   return (
     <div className="mt-auto p-3">
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+      <div className="rounded-xl border border-line bg-wash p-3">
         <div className="flex items-center justify-between">
-          <span className="inline-flex items-center gap-2 text-xs font-medium text-zinc-300">
+          <span className="inline-flex items-center gap-2 text-xs font-medium text-fg/80">
             <span
               className={cn(
                 'h-2 w-2 rounded-full',
@@ -75,9 +76,9 @@ function StatusFooter() {
             />
             Render: {online ? 'Online' : 'Waking…'}
           </span>
-          <span className="text-[11px] tabular-nums text-zinc-500">{clock}</span>
+          <span className="text-[11px] tabular-nums text-subtle">{clock}</span>
         </div>
-        <div className="mt-2 flex items-center justify-between text-[11px] text-zinc-500">
+        <div className="mt-2 flex items-center justify-between text-[11px] text-subtle">
           <span>{clips.length} in queue</span>
           <span>{health?.posting_times?.join(' · ') || '19:00 · 21:00'}</span>
         </div>
@@ -100,14 +101,14 @@ function NavList({ pathname }) {
             className={cn(
               'group flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition',
               active
-                ? 'bg-white/[0.07] font-semibold text-white'
-                : 'font-medium text-muted hover:bg-white/[0.04] hover:text-white'
+                ? 'bg-wash-strong font-semibold text-fg'
+                : 'font-medium text-muted hover:bg-wash hover:text-fg'
             )}
           >
             <Icon
               className={cn(
                 'h-4 w-4 shrink-0 transition',
-                active ? 'text-brand' : 'text-zinc-500 group-hover:text-zinc-300'
+                active ? 'text-brand' : 'text-subtle group-hover:text-fg/80'
               )}
             />
             <span className="flex-1 truncate">{item.label}</span>
@@ -137,18 +138,18 @@ export default function Sidebar() {
 
   return (
     <>
-      <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-white/10 bg-ink/90 px-4 backdrop-blur lg:hidden">
+      <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-line bg-ink/90 px-4 backdrop-blur lg:hidden">
         <button
           type="button"
           onClick={() => setOpen(true)}
           aria-label="Open navigation"
           aria-expanded={open}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 text-zinc-300 transition hover:bg-white/5"
+          className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line text-fg/80 transition hover:bg-wash"
         >
           <Menu className="h-4 w-4" />
         </button>
         <Brand />
-        <span className="inline-flex items-center gap-1.5 text-[11px] text-zinc-500">
+        <span className="inline-flex items-center gap-1.5 text-[11px] text-subtle">
           <span
             className={cn(
               'h-1.5 w-1.5 rounded-full',
@@ -159,11 +160,12 @@ export default function Sidebar() {
         </span>
       </header>
 
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[264px] flex-col border-r border-white/10 bg-[#0C0C0E] lg:flex">
-        <div className="flex h-16 items-center px-5">
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[264px] flex-col border-r border-line bg-rail lg:flex">
+        <div className="flex h-16 items-center justify-between px-5">
           <Brand />
+          <ThemeToggle />
         </div>
-        <p className="px-6 pb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-600">
+        <p className="px-6 pb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-subtle/80">
           Workspace
         </p>
         <NavList pathname={pathname} />
@@ -178,19 +180,22 @@ export default function Sidebar() {
             onClick={() => setOpen(false)}
             className="absolute inset-0 bg-black/70 backdrop-blur-sm"
           />
-          <div className="absolute inset-y-0 left-0 flex w-[280px] flex-col border-r border-white/10 bg-[#0C0C0E] shadow-2xl">
+          <div className="absolute inset-y-0 left-0 flex w-[280px] flex-col border-r border-line bg-rail shadow-2xl">
             <div className="flex h-16 items-center justify-between px-5">
               <Brand />
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                aria-label="Close navigation"
-                className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-white/10 text-zinc-300"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                <ThemeToggle />
+                <button
+                  type="button"
+                  onClick={() => setOpen(false)}
+                  aria-label="Close navigation"
+                  className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line text-muted"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
-            <p className="px-6 pb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-600">
+            <p className="px-6 pb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-subtle/80">
               Workspace
             </p>
             <NavList pathname={pathname} />

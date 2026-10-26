@@ -3,8 +3,70 @@
 @tailwind utilities;
 
 @layer base {
+  /*
+   * Palette #2 — warm coffee ramp
+   *   #211B1A  #382A28  #60433D  #916B60  #C1A094  #EBD8CE
+   *
+   * :root carries the dark theme; [data-theme='light'] re-points the same
+   * variables. An inline script in app/layout.js sets data-theme before first
+   * paint, so there is no flash of the wrong theme.
+   */
   :root {
     color-scheme: dark;
+
+    --ink-rgb: 33 27 26; /* #211B1A  page background */
+    --rail-rgb: 27 22 21; /* sidebar, a shade deeper than the page */
+    --surface-rgb: 56 42 40; /* #382A28  cards */
+    --raised-rgb: 56 42 40; /* popovers, toast */
+    --field-rgb: 26 21 20; /* inputs, sunken fields */
+    --line-rgb: 96 67 61; /* #60433D  hairlines and borders */
+    --muted-rgb: 193 160 148; /* #C1A094  secondary text */
+    --subtle-rgb: 176 141 127; /* tertiary text, kept above 4.5:1 on ink */
+    --fg-rgb: 235 216 206; /* #EBD8CE  primary text */
+    --brand-rgb: 193 160 148; /* #C1A094  accent */
+    --brand-hover-rgb: 235 216 206; /* #EBD8CE */
+    --onbrand-rgb: 33 27 26; /* text sitting on the accent */
+    --danger-rgb: 255 154 147;
+    --warn-rgb: 240 190 120;
+    --ok-rgb: 134 217 168;
+
+    --wash: rgb(235 216 206 / 0.05);
+    --wash-strong: rgb(235 216 206 / 0.09);
+    --brand-soft: rgb(193 160 148 / 0.14);
+    --skel: #382a28;
+    --skel-hi: #4a3733;
+    --selection: rgb(193 160 148 / 0.35);
+    --shadow-card: 0 1px 0 rgb(235 216 206 / 0.04) inset, 0 20px 40px -24px rgb(0 0 0 / 0.8);
+    --shadow-glow: 0 16px 40px -18px rgb(193 160 148 / 0.45);
+  }
+
+  [data-theme='light'] {
+    color-scheme: light;
+
+    --ink-rgb: 235 216 206; /* #EBD8CE  page background */
+    --rail-rgb: 227 210 198;
+    --surface-rgb: 253 249 246;
+    --raised-rgb: 255 253 251;
+    --field-rgb: 255 253 251;
+    --line-rgb: 193 160 148; /* #C1A094 */
+    --muted-rgb: 96 67 61; /* #60433D  secondary text */
+    --subtle-rgb: 122 92 84; /* tertiary text, kept above 4.5:1 on cream */
+    --fg-rgb: 33 27 26; /* #211B1A  primary text */
+    --brand-rgb: 96 67 61; /* #60433D  accent */
+    --brand-hover-rgb: 56 42 40; /* #382A28 */
+    --onbrand-rgb: 246 237 231;
+    --danger-rgb: 178 54 45;
+    --warn-rgb: 140 96 20;
+    --ok-rgb: 34 120 78;
+
+    --wash: rgb(96 67 61 / 0.06);
+    --wash-strong: rgb(96 67 61 / 0.11);
+    --brand-soft: rgb(96 67 61 / 0.12);
+    --skel: #f1e6df;
+    --skel-hi: #e6d7cc;
+    --selection: rgb(193 160 148 / 0.55);
+    --shadow-card: 0 1px 0 rgb(255 255 255 / 0.7) inset, 0 18px 36px -26px rgb(96 67 61 / 0.5);
+    --shadow-glow: 0 16px 40px -20px rgb(96 67 61 / 0.4);
   }
 
   html {
@@ -13,11 +75,11 @@
   }
 
   body {
-    @apply bg-ink text-white antialiased;
+    @apply bg-ink text-fg antialiased;
   }
 
   ::selection {
-    background: rgba(47, 128, 237, 0.35);
+    background: var(--selection);
   }
 
   ::-webkit-scrollbar {
@@ -28,15 +90,15 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.12);
-    border: 2px solid #0a0a0b;
+    background: rgb(var(--line-rgb) / 0.7);
+    border: 2px solid rgb(var(--ink-rgb));
     border-radius: 999px;
   }
 }
 
 @layer components {
   .card {
-    @apply rounded-xl border border-white/10 bg-surface shadow-card;
+    @apply rounded-xl border border-line bg-surface shadow-card;
   }
 
   .card-pad {
@@ -48,26 +110,26 @@
   }
 
   .input {
-    @apply w-full rounded-lg border border-white/10 bg-[#0E0E10] px-3.5 py-2.5 text-sm text-white outline-none transition
-      placeholder:text-zinc-600 focus:border-brand/60 focus:ring-4 focus:ring-brand/10 disabled:opacity-50;
+    @apply w-full rounded-lg border border-line bg-field px-3.5 py-2.5 text-sm text-fg outline-none transition
+      placeholder:text-subtle/80 focus:border-brand/60 focus:ring-4 focus:ring-brand/10 disabled:opacity-50;
   }
 
   .btn {
-    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-4 py-2.5
-      text-sm font-semibold text-white transition hover:bg-white/[0.08]
+    @apply inline-flex items-center justify-center gap-2 rounded-lg border border-line bg-wash px-4 py-2.5
+      text-sm font-semibold text-fg transition hover:bg-wash-strong
       disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-primary {
-    @apply border-transparent bg-brand text-white shadow-glow hover:bg-brand-dark;
+    @apply border-transparent bg-brand text-onbrand shadow-glow hover:bg-brand-hover;
   }
 
   .btn-ghost {
-    @apply border-transparent bg-transparent text-muted hover:bg-white/[0.06] hover:text-white;
+    @apply border-transparent bg-transparent text-muted hover:bg-wash-strong hover:text-fg;
   }
 
   .btn-danger {
-    @apply border-transparent bg-red-500/15 text-red-300 hover:bg-red-500/25;
+    @apply border-transparent bg-danger/10 text-danger hover:bg-danger/20;
   }
 
   .btn-sm {
@@ -75,8 +137,8 @@
   }
 
   .pill {
-    @apply inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-2.5 py-1
-      text-[11px] font-medium text-zinc-300;
+    @apply inline-flex items-center gap-1.5 rounded-full border border-line bg-wash px-2.5 py-1
+      text-[11px] font-medium text-fg/80;
   }
 
   .no-scrollbar {

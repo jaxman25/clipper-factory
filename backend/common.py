@@ -130,3 +130,31 @@ def warn(message: str, **fields: Any) -> None:
 
 def error(message: str, **fields: Any) -> None:
     log("error", message, **fields)
+
+
+def clear_logs() -> dict[str, int]:
+    """Empty the activity tail and delete the per-job ``.log`` files.
+
+    Mirrors ``DELETE /api/logs`` in the dashboard so both entry points behave
+    the same: the tail is truncated (never unlinked) because workers append to
+    it with ``O_APPEND``, and job logs that are still held open by a running
+    job are skipped instead of raising.
+    """
+    paths.STATE.mkdir(parents=True, exist_ok=True)
+    activity = 0
+    try:
+        paths.LOG_FILE.write_text("", encoding="utf-8")
+        activity = 1
+    except OSError:
+        pass
+    job_logs = 0
+    for directory in (paths.STATE, paths.JOBS, paths.LOGS):
+        if not directory.exists():
+            continue
+        for path in sorted(directory.glob("*.log")):
+            try:
+                path.unlink()
+                job_logs += 1
+            except OSError:
+                continue  # a running job still has the file open
+    return {"activity": activity, "job_logs": job_logs}

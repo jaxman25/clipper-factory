@@ -17,9 +17,9 @@ const STEPS = [
 
 function statusIcon(status) {
   if (status === 'running') return <Loader2 className="h-3.5 w-3.5 animate-spin text-brand" />;
-  if (status === 'done') return <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />;
-  if (status === 'error') return <XCircle className="h-3.5 w-3.5 text-red-400" />;
-  return <Clock className="h-3.5 w-3.5 text-zinc-500" />;
+  if (status === 'done') return <CheckCircle2 className="h-3.5 w-3.5 text-ok" />;
+  if (status === 'error') return <XCircle className="h-3.5 w-3.5 text-danger" />;
+  return <Clock className="h-3.5 w-3.5 text-subtle" />;
 }
 
 export default function GeneratePage() {
@@ -53,23 +53,23 @@ export default function GeneratePage() {
               description="Every run you start shows up here with its stage and progress."
             />
           ) : (
-            <ul className="divide-y divide-white/5">
+            <ul className="divide-y divide-line/60">
               {jobs.map((entry) => (
                 <li key={entry.id} className="flex flex-wrap items-center gap-3 py-3 first:pt-0 last:pb-0">
-                  <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-white/[0.04]">
+                  <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-wash">
                     {statusIcon(entry.status)}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-medium text-zinc-100">
+                    <p className="truncate text-[13px] font-medium text-fg">
                       {entry.message || entry.stage || entry.status}
                     </p>
-                    <p className="mt-0.5 text-[11px] text-zinc-500">
+                    <p className="mt-0.5 text-[11px] text-subtle">
                       <span className="font-mono">{entry.id}</span>
                       {entry.created_at ? ` · ${formatInTZ(entry.created_at, timeZone)}` : ''}
                       {entry.clips?.length ? ` · ${entry.clips.length} clips` : ''}
                     </p>
                   </div>
-                  <span className="shrink-0 text-[11px] tabular-nums text-zinc-400">
+                  <span className="shrink-0 text-[11px] tabular-nums text-muted">
                     {entry.status === 'running' ? `${entry.progress || 0}%` : entry.status}
                   </span>
                 </li>
@@ -82,12 +82,12 @@ export default function GeneratePage() {
           <ol className="space-y-3">
             {STEPS.map(([title, body], index) => (
               <li key={title} className="flex gap-3">
-                <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-white/[0.04] text-[10px] font-bold text-zinc-400">
+                <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded bg-wash text-[10px] font-bold text-muted">
                   {index + 1}
                 </span>
                 <div>
-                  <p className="text-[13px] font-medium text-zinc-200">{title}</p>
-                  <p className="mt-0.5 text-[11px] leading-relaxed text-zinc-500">{body}</p>
+                  <p className="text-[13px] font-medium text-fg/90">{title}</p>
+                  <p className="mt-0.5 text-[11px] leading-relaxed text-subtle">{body}</p>
                 </div>
               </li>
             ))}

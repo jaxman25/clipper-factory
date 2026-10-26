@@ -127,7 +127,7 @@ export default function ClipCard({ clip }) {
         <span
           className={cn(
             'absolute left-3 top-3 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide backdrop-blur',
-            posted ? 'bg-emerald-500/15 text-emerald-300' : 'bg-black/60 text-white'
+            posted ? 'bg-emerald-500/15 text-ok' : 'bg-black/60 text-fg'
           )}
         >
           {clip.manual_required ? 'Needs manual' : posted ? 'Posted' : 'Queued'}
@@ -232,12 +232,12 @@ export default function ClipCard({ clip }) {
         </div>
 
         {note && (
-          <p className={cn('text-[11px]', note.kind === 'error' ? 'text-red-400' : 'text-emerald-400')}>
+          <p className={cn('text-[11px]', note.kind === 'error' ? 'text-danger' : 'text-ok')}>
             {note.text}
           </p>
         )}
         {!note && posted && clip.posted_at && (
-          <p className="text-[11px] text-zinc-500">Posted {formatInTZ(clip.posted_at, timeZone)}</p>
+          <p className="text-[11px] text-subtle">Posted {formatInTZ(clip.posted_at, timeZone)}</p>
         )}
       </div>
     </article>
