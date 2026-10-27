@@ -70,6 +70,40 @@ def has_session_cookie(context) -> bool:
     return any(cookie.get("name") in ("sessionid", "sessionid_ss") for cookie in context.cookies())
 
 
+AUTOMATION_FLAG = "--disable-blink-features=AutomationControlled"
+
+
+def launch_browser(pw, **kwargs):
+    """Launch the system Google Chrome instead of Playwright's bundled Chromium.
+
+    TikTok's login page blocks the bundled browser (navigator.webdriver is set);
+    ``channel='chrome'`` plus ``--disable-blink-features=AutomationControlled``
+    hides it. If Google Chrome isn't installed (containers, CI) we fall back to
+    the bundled Chromium so the script still runs.
+    """
+    args = list(kwargs.get("args") or [])
+    if AUTOMATION_FLAG not in args:
+        args.append(AUTOMATION_FLAG)
+    kwargs["args"] = args
+    try:
+        return pw.chromium.launch(channel="chrome", **kwargs)
+    except Exception as exc:
+        log(f"Google Chrome unavailable ({exc}); falling back to bundled Chromium")
+        return pw.chromium.launch(**kwargs)
+
+
+# Runs before any page script: makes navigator.webdriver read as undefined
+# instead of true, which is the main automation signal Playwright exposes.
+STEALTH_INIT_JS = """
+Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+"""
+
+
+def add_stealth(context) -> None:
+    """Hide Playwright's automation markers from page scripts."""
+    context.add_init_script(STEALTH_INIT_JS)
+
+
 def do_login() -> int:
     try:
         from playwright.sync_api import sync_playwright
@@ -79,8 +113,9 @@ def do_login() -> int:
 
     target = paths_auth_for_write()
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=False)
+        browser = launch_browser(pw, headless=False)
         context = browser.new_context(viewport={"width": 1280, "height": 900})
+        add_stealth(context)
         page = context.new_page()
         page.goto("https://www.tiktok.com/login", wait_until="domcontentloaded")
         log("Log into TikTok in the opened browser window (up to 5 minutes)...")
@@ -135,9 +170,10 @@ def upload(file: Path, caption: str, headless: bool) -> int:
     shot = shot_dir / f"tiktok-{int(time.time())}.png"
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(
+        browser = launch_browser(
+            pw,
             headless=headless,
-            args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-blink-features=AutomationControlled"],
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
         context = browser.new_context(
             storage_state=str(auth),
@@ -149,6 +185,7 @@ def upload(file: Path, caption: str, headless: bool) -> int:
                 "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             ),
         )
+        add_stealth(context)
         page = context.new_page()
 
         try:
