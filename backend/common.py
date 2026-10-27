@@ -4,7 +4,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -62,13 +64,116 @@ def _read_json(path: Path) -> dict[str, Any]:
         return {}
 
 
+def _replace_with_retry(src: Path, dst: Path) -> None:
+    """``os.replace`` with bounded retries for Windows sharing violations.
+
+    On Windows the rename fails with ``WinError 32`` (or EACCES) while another
+    process briefly holds the destination open for reading. The readers here
+    are millisecond-long JSON parses, so a few short retries clear the window;
+    the original error is re-raised if the retries are exhausted.
+    """
+    delay = 0.02
+    for attempt in range(5):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt == 4:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.5)
+
+
 def write_json(path: Path, data: Any) -> None:
-    """Atomically write JSON so readers never see a half-written file."""
+    """Atomically write JSON so readers never see a half-written file.
+
+    The temporary file lives next to the destination with a unique name from
+    ``mkstemp`` (exclusive creation), so concurrent writers - the Python
+    worker, the Telegram bot, the Node dashboard - can never open the same
+    ``.tmp`` file. Sharing one fixed name is what raised ``WinError 32``
+    ("file is being used by another process") when renaming it away.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f"{path.name}.", suffix=".tmp", dir=str(path.parent)
+    )
+    tmp = Path(tmp_name)
+    try:
+        # mkstemp creates the file 0600; keep the historical 0644 so other
+        # local processes (Node, the bot) keep reading it exactly as before.
+        try:
+            os.chmod(tmp, 0o644)
+        except OSError:
+            pass
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        _replace_with_retry(tmp, path)
+    except BaseException:
+        # Only this call's uniquely named temporary file is ever removed, so
+        # another writer's temporary file can never be deleted by mistake.
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def read_lock() -> dict[str, Any]:
+    """Read ``generate.lock`` as ``{"job_id", "pid", "created_at"}``.
+
+    Locks written before the ownership fix are a bare job id; those still
+    parse to ``{"job_id": ...}`` so ownership can be checked against them.
+    Returns ``{}`` when the lock is missing or unreadable (an unreadable lock
+    is treated as *owned by nobody*, never as free to delete).
+    """
+    try:
+        raw = paths.LOCK_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return {}
+    if not raw:
+        return {}
+    try:
+        info = json.loads(raw)
+        if isinstance(info, dict) and info:
+            return info
+    except ValueError:
+        pass
+    return {"job_id": raw}
+
+
+def remove_lock_if_owned(
+    job_id: str | None = None, pid: int | None = None
+) -> bool:
+    """Delete ``generate.lock`` only when it belongs to this job/worker.
+
+    A cancellation, an exit handler or a signal must never drop a lock that a
+    *different* generation job is holding - that would let a second worker
+    start next to a live one. When ``job_id`` is given it must match the lock
+    exactly (a recycled PID can then never free a foreign job's lock); the
+    ``pid`` match is only used by callers that pass no ``job_id``.
+    Returns True only when the lock existed, matched, and was removed.
+    """
+    info = read_lock()
+    if not info:
+        return False
+    if job_id is not None:
+        owned = str(info.get("job_id", "")) == str(job_id)
+    elif pid is not None and info.get("pid") is not None:
+        try:
+            owned = int(info["pid"]) == int(pid)
+        except (TypeError, ValueError):
+            owned = False
+    else:
+        owned = False
+    if not owned:
+        return False
+    try:
+        paths.LOCK_FILE.unlink(missing_ok=True)
+        return True
+    except OSError:
+        return False
 
 
 def apply_env_overrides() -> None:

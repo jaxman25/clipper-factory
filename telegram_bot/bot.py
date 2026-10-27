@@ -28,6 +28,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+# Python 3.14 compatibility: asyncio.get_event_loop() no longer creates a loop
+# implicitly and raises RuntimeError when none is set, which breaks third-party
+# imports that still call it at startup. Create and install one up front.
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -356,6 +364,14 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     proc = running.get("proc")
     job_id = running.get("job_id", "")
+    # Mark the document cancelled FIRST: the worker re-checks this state on
+    # every write, so a live worker can never overwrite the terminal state
+    # with 'running'/'done' while it winds down. Repeats stay idempotent.
+    data = read_job(job_id)
+    if data and data.get("status") != "cancelled":
+        data["status"] = "cancelled"
+        data["message"] = "Cancelled by user"
+        common.write_json(job_file(job_id), data)
     if proc and proc.returncode is None:
         proc.terminate()
         try:
@@ -363,12 +379,10 @@ async def cmd_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         except asyncio.TimeoutError:
             proc.kill()
     RUNNING.pop(chat_id, None)
-    paths.LOCK_FILE.unlink(missing_ok=True)
-    data = read_job(job_id)
-    if data:
-        data["status"] = "cancelled"
-        data["message"] = "Cancelled by user"
-        common.write_json(job_file(job_id), data)
+    # Drop the lock only when it belongs to this job - cancelling one job
+    # must never unlock a different, still-running generation.
+    if paths.LOCK_FILE.exists() and not common.remove_lock_if_owned(job_id):
+        common.warn(f"generate.lock not owned by {job_id}; left untouched")
     await reply(update, "🛑 Generation cancelled.")
 
 
@@ -484,7 +498,24 @@ def library_version_error(installed: str = PTB_VERSION) -> str | None:
     )
 
 
+def warn_if_legacy_python() -> None:
+    """Startup check: the event-loop patch at the top of this file targets 3.14.
+
+    On Python < 3.14 ``asyncio.get_event_loop()`` still auto-creates a loop
+    (deprecated), so the patched path never triggers there - flag the version so
+    an event-loop problem on an older interpreter is not mistaken for it.
+    """
+    if sys.version_info < (3, 14):
+        common.warn(
+            f"Python {sys.version_info[0]}.{sys.version_info[1]} is below 3.14: "
+            "the event-loop compatibility patch at the top of this file targets "
+            "Python 3.14, where asyncio.get_event_loop() stopped creating a "
+            "loop implicitly."
+        )
+
+
 def main() -> int:
+    warn_if_legacy_python()
     version_problem = library_version_error()
     if version_problem:
         print(version_problem, file=sys.stderr)

@@ -33,7 +33,7 @@ auth.json
 # Python
 __pycache__/
 *.py[cod]
-.venv/
+.venv-1/
 venv/
 
 # OS / editor

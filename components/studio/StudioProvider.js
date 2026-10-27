@@ -58,9 +58,10 @@ export function StudioProvider({ children }) {
       const list = payload.jobs || [];
       setJobs(list);
 
-      // If the last known job was aborted, drop it. The abort endpoint
-      // deletes the stale job doc, so a missing job in the list means the
-      // abort was processed. This prevents the auto-polling from
+      // If the last known job was aborted, drop it. The abort endpoint marks
+      // the document 'cancelled' (it keeps it for job history) instead of
+      // deleting it, so a job that is missing or no longer 'running' is
+      // treated as finished. This prevents the auto-polling from
       // re-triggering a phantom "running" job.
       setJob((current) => {
         if (current?.id) {

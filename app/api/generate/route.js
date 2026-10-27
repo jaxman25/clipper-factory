@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { DIRS, ensureDirs, listJobs, readJob, sanitizeId, writeJSON } from '@/lib/store';
+import { DIRS, ensureDirs, listJobs, markJobErrorIfRunning, readJob, sanitizeId, updateJSON, writeJSONIfAbsent } from '@/lib/store';
 import { startPython } from '@/lib/spawn';
 
 export const dynamic = 'force-dynamic';
@@ -75,18 +75,16 @@ export async function POST(request) {
   }
 
   const jobId = sanitizeId(`job-${Date.now().toString(36)}`);
-  const worker = startPython(
-    'backend/main.py',
-    ['--url', url, '--job-id', jobId, '--num-shorts', String(numShorts), '--mode', mode],
-    jobId
-  );
+  const jobFile = path.join(DIRS.jobs, `${jobId}.json`);
 
-  // Persist the worker PID in the job doc so the abort endpoint can
-  // signal the running worker by PID across module boundaries.
-  writeJSON(path.join(DIRS.jobs, `${jobId}.json`), {
+  // Initialise the job document BEFORE spawning the worker. Writing it after
+  // the spawn raced with the worker's first write: the API's initial 0%
+  // "queued" record could land on top of progress the worker had already
+  // recorded, and writeJSONIfAbsent keeps the existing document authoritative.
+  writeJSONIfAbsent(jobFile, {
     id: jobId,
     status: 'running',
-    pid: worker.pid,
+    pid: null,
     stage: 'queued',
     progress: 0,
     message: 'Queued for the clip worker',
@@ -98,30 +96,66 @@ export async function POST(request) {
     updated_at: new Date().toISOString(),
   });
 
+  let worker;
+  try {
+    worker = startPython(
+      'backend/main.py',
+      ['--url', url, '--job-id', jobId, '--num-shorts', String(numShorts), '--mode', mode],
+      jobId
+    );
+  } catch (err) {
+    // A spawn failure must produce a useful error state, not a phantom job
+    // the dashboard would poll forever.
+    markJobErrorIfRunning(jobId, {
+      message: `Clip worker failed to start: ${err.message}`,
+      error: String(err.message || err),
+    });
+    return Response.json({ error: `Clip worker failed to start: ${err.message}` }, { status: 500 });
+  }
+
+  // Persist the worker PID in the job doc so the abort endpoint can signal
+  // the running worker by PID across module boundaries. This is a
+  // read-modify-write merge (never a full overwrite) and it is skipped when
+  // the worker already recorded its own pid or a cancellation landed first.
+  try {
+    const doc = readJob(jobId);
+    if (doc && doc.status === 'running' && !doc.pid) {
+      updateJSON(jobFile, { pid: worker.pid });
+    }
+  } catch (err) {
+    /* pid is best effort - the worker writes its own pid too */
+  }
+
   // A worker that dies before writing status (bad interpreter, OOM) must not
   // leave the dashboard polling a phantom "running" job forever.
-  worker.child?.on('exit', (code) => {
-    if (code === 0) return;
+  const reportWorkerFailure = (message, error) => {
     try {
-      const job = readJob(jobId);
-      if (!job || job.status !== 'running') return;
       let tail = '';
       try {
         tail = fs.readFileSync(worker.log, 'utf8').slice(-800).trim();
       } catch (err) {
         /* log may not exist */
       }
-      writeJSON(path.join(DIRS.jobs, `${jobId}.json`), {
-        ...job,
-        status: 'error',
-        stage: 'error',
-        message: tail || `Clip worker exited with code ${code}`,
-        error: tail || `exit code ${code}`,
-        updated_at: new Date().toISOString(),
-      });
+      // Conditional transition: markJobErrorIfRunning only rewrites a document
+      // that is still 'running', so it can never overwrite a done/cancelled
+      // end state with stale error data.
+      markJobErrorIfRunning(jobId, { message: tail || message, error: tail || error });
     } catch (err) {
-      /* never throw from an exit handler */
+      /* never throw from a process event handler */
     }
+  };
+
+  worker.child?.on('exit', (code) => {
+    if (code === 0) return;
+    reportWorkerFailure(`Clip worker exited with code ${code}`, `exit code ${code}`);
+  });
+  // Spawn failures (missing interpreter, EPERM, ...) emit 'error' instead of
+  // 'exit'; without this the initial record would stay "running" forever.
+  worker.child?.on('error', (err) => {
+    reportWorkerFailure(
+      `Clip worker failed to start: ${err.message}`,
+      `spawn error: ${err.message}`
+    );
   });
 
   return Response.json({

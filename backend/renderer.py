@@ -20,6 +20,7 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -258,7 +259,13 @@ def ensure_gradient() -> Path | None:
 
 
 def make_thumbnail(video: Path, out: Path, at: float = 1.0) -> None:
-    tmp = out.with_suffix(".tmp.jpg")
+    # Unique temp name next to the destination: a fixed "x.tmp.jpg" shared by
+    # two renders of the same clip raises WinError 32 on Windows.
+    fd, tmp_name = tempfile.mkstemp(
+        prefix=f"{out.stem}.", suffix=".jpg", dir=str(out.parent)
+    )
+    os.close(fd)
+    tmp = Path(tmp_name)
     try:
         _run_ffmpeg(
             ["-ss", f"{at:.2f}", "-i", str(video), "-frames:v", "1",

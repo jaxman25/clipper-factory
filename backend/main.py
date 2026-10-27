@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import json
 import os
 import shutil
 import subprocess
@@ -43,21 +44,42 @@ except ImportError:  # direct execution: python backend/main.py
 
 WHISPER_DIR = Path(os.getenv("WHISPER_MODEL_DIR", "/tmp/whisper_models"))
 
+# The backend runs inside a virtualenv that does not inherit the system PATH,
+# so yt-dlp cannot discover Deno on its own and the YouTube "n" challenge
+# solving fails. Pin yt-dlp to the system Deno install explicitly.
+DENO_PATH = (
+    r"C:\Users\jane\AppData\Local\Microsoft\WinGet\Packages"
+    r"\DenoLand.Deno_Microsoft.Winget.Source_8wekyb3d8bbwe\deno.exe"
+)
+
 
 class JobError(RuntimeError):
     pass
 
 
+class JobCancelled(JobError):
+    """The job document was cancelled externally (bot or dashboard)."""
+
+
 class Job:
-    """Progress document polled by the dashboard and Telegram bot."""
+    """Progress document polled by the dashboard and Telegram bot.
+
+    The worker owns the normal progress transitions, but a cancellation
+    written by the Telegram bot or the dashboard is terminal: once the
+    on-disk document says ``cancelled`` this object stops writing, so a live
+    worker can never resurrect the job with a misleading ``running``/``done``
+    state.
+    """
 
     def __init__(
         self, job_id: str, url: str, num_shorts: int, mode: str = "viral"
     ) -> None:
         self.id = job_id
         self.path = paths.JOBS / f"{job_id}.json"
+        self.cancelled = False
         self.data: dict[str, Any] = {
             "id": job_id,
+            "pid": os.getpid(),
             "status": "running",
             "stage": "starting",
             "progress": 0,
@@ -70,9 +92,36 @@ class Job:
             "clips": [],
             "error": None,
         }
+        if self._disk_status() == "cancelled":
+            # Cancellation landed before (or as) the worker started: the
+            # terminal state wins and is never overwritten by a fresh doc.
+            self.cancelled = True
+            return
         self._write()
 
+    def _disk_status(self) -> str:
+        """Status currently on disk ('' when the document is missing)."""
+        try:
+            with open(self.path, "r", encoding="utf-8") as fh:
+                status = json.load(fh).get("status")
+            return status if isinstance(status, str) else ""
+        except (OSError, ValueError):
+            return ""
+
+    def _check_not_cancelled(self) -> None:
+        if not self.cancelled and self._disk_status() == "cancelled":
+            self.cancelled = True
+        if self.cancelled:
+            raise JobCancelled(f"Job {self.id} was cancelled")
+
     def _write(self) -> None:
+        # Last-moment guard: never overwrite a cancellation written by the
+        # bot or the dashboard with a running/done/error state.
+        if self.cancelled:
+            return
+        if self._disk_status() == "cancelled":
+            self.cancelled = True
+            return
         self.data["updated_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
         common.write_json(self.path, self.data)
 
@@ -84,6 +133,7 @@ class Job:
         message: str | None = None,
         **extra: Any,
     ) -> None:
+        self._check_not_cancelled()
         if stage is not None:
             self.data["stage"] = stage
         if progress is not None:
@@ -142,12 +192,29 @@ def acquire_lock(job_id: str) -> None:
             return acquire_lock(job_id)
         raise JobError("Another generation job is already running. Try again when it finishes.")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write(job_id)
+        # Record ownership so cancellations, aborts and exit handlers can
+        # verify the lock is theirs before deleting it.
+        json.dump(
+            {
+                "job_id": job_id,
+                "pid": os.getpid(),
+                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            },
+            fh,
+            ensure_ascii=False,
+        )
         fh.flush()
+        os.fsync(fh.fileno())
 
 
-def release_lock() -> None:
-    paths.LOCK_FILE.unlink(missing_ok=True)
+def release_lock(job_id: str | None = None) -> None:
+    """Release ``generate.lock`` only when it belongs to this job.
+
+    A lock held by a different job - or one we cannot identify - is left
+    untouched; see ``common.remove_lock_if_owned``.
+    """
+    if common.read_lock() and not common.remove_lock_if_owned(job_id, os.getpid()):
+        common.warn(f"generate.lock not owned by {job_id!r}; left untouched")
 
 
 def download_source(url: str, job_id: str, job: Job) -> tuple[Path, str]:
@@ -170,6 +237,15 @@ def download_source(url: str, job_id: str, job: Job) -> tuple[Path, str]:
     cookies = os.getenv("YTDLP_COOKIES", "").strip()
     if cookies and Path(cookies).exists():
         opts["cookiefile"] = cookies
+
+    # --js-runtimes "deno:<path>" : use the system Deno binary (the venv PATH
+    # has no deno), falling back to a PATH lookup when the pinned path is absent.
+    if Path(DENO_PATH).exists():
+        opts["js_runtimes"] = {"deno": {"path": DENO_PATH}}
+    else:
+        opts["js_runtimes"] = {"deno": {}}
+    # --remote-components ejs:github : allow fetching the n-solver scripts.
+    opts["remote_components"] = ["ejs:github"]
 
     def hook(status: dict) -> None:
         if status.get("status") != "downloading":
@@ -294,14 +370,21 @@ def _relative_words(candidate: viral.Candidate, clip_start: float) -> list[capti
     return out
 
 
+_ACTIVE_JOB_ID = ""  # published by run(); signal handlers cannot see run()'s locals
+
+
 def _abort_handler(signum, frame) -> None:
     """Interrupt point: cancel the running job and exit cleanly."""
-    common.warn(f"Received signal {signum}; cancelling {job_id}")
+    active = _ACTIVE_JOB_ID
+    common.warn(f"Received signal {signum}; cancelling {active or '<none>'}")
     try:
-        if not job_id:
+        if not active:
             return
-        paths.LOCK_FILE.unlink(missing_ok=True)
-        job = read_job(job_id)
+        # Drop the lock only when this worker actually owns it: a signal
+        # arriving before acquire_lock() must not unlock another job's run.
+        if common.read_lock() and not common.remove_lock_if_owned(active, os.getpid()):
+            common.warn(f"generate.lock is not owned by {active}; left untouched")
+        job = read_job(active)
         if job:
             job["status"] = "cancelled"
             job["message"] = "Cancelled by user"
@@ -321,12 +404,8 @@ def read_job(job_id: str) -> dict[str, Any]:
 
 
 def _write_job(job: dict[str, Any]) -> None:
-    """Atomically write a job document."""
-    paths.JOBS.mkdir(parents=True, exist_ok=True)
-    tmp = paths.JOBS / f"{job['id']}.json.tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(job, fh, ensure_ascii=False, indent=2)
-    os.replace(tmp, paths.JOBS / f"{job['id']}.json")
+    """Atomically write a job document via the shared unique-tmp writer."""
+    common.write_json(paths.JOBS / f"{job['id']}.json", job)
 
 
 def _next_job_dir(job_id: str) -> Path:
@@ -336,12 +415,14 @@ def _next_job_dir(job_id: str) -> Path:
 
 
 def run(args: argparse.Namespace) -> int:
+    global _ACTIVE_JOB_ID
     paths.ensure_dirs()
     cfg = common.load_config()
     num_shorts = int(args.num_shorts or cfg.get("shorts_per_video", 10))
     job_id = paths.safe_id(args.job_id or datetime.now().strftime("job-%Y%m%d-%H%M%S"))
     mode = getattr(args, "mode", "viral")
     job = Job(job_id, args.url or args.local_file or "", num_shorts, mode)
+    _ACTIVE_JOB_ID = job_id
     common.info(f"Job {job_id} started (mode={mode})", url=args.url or args.local_file)
 
     # Abort is signalled by removing this file's lock — the dashboard backend
@@ -357,6 +438,8 @@ def run(args: argparse.Namespace) -> int:
     source: Path | None = None
     locked = False
     try:
+        if job.cancelled:
+            raise JobCancelled(f"Job {job_id} was cancelled before it started")
         _ensure_tools()
         acquire_lock(job_id)
         locked = True
@@ -650,7 +733,15 @@ def run(args: argparse.Namespace) -> int:
             )
             telegram.send_message(summary)
         return 0
+    except JobCancelled as exc:
+        common.warn(str(exc), job=job_id)
+        return 0
     except Exception as exc:
+        if job.cancelled:
+            # A cancellation won the race: the document already carries the
+            # terminal state, so do not append a misleading error or notify.
+            common.warn(f"Job {job_id} stopped after cancellation", job=job_id)
+            return 0
         message = str(exc) or exc.__class__.__name__
         job.fail(message)
         common.error(message, job=job_id, trace=traceback.format_exc()[-1500:])
@@ -670,7 +761,8 @@ def run(args: argparse.Namespace) -> int:
             except OSError:
                 pass
         if locked:
-            release_lock()
+            release_lock(job_id)
+        _ACTIVE_JOB_ID = ""
 
 
 def build_parser() -> argparse.ArgumentParser:

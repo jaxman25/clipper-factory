@@ -1,4 +1,4 @@
-yt-dlp
+yt-dlp[default]
 faster-whisper
 opencv-python-headless
 mediapipe

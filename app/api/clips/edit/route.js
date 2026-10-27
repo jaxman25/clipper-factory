@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { DIRS, findClip, sanitizeId, loadSettings } from '@/lib/store';
+import { DIRS, findClip, sanitizeId, loadSettings, writeJSON } from '@/lib/store';
 
 // Re-render a queued clip with new user-chosen start and end times.
 // Reads the original source from downloads/, cuts it with FFmpeg, and
@@ -82,15 +82,13 @@ async function rerenderClip(clip) {
     const clipIndex = jobData.clips?.findIndex((c) => c.id === clip.id);
     if (clipIndex >= 0) {
       jobData.clips[clipIndex] = meta;
-      fs.writeFileSync(jobPath, JSON.stringify(jobData, null, 2), 'utf8');
+      // Atomic, unique-tmp write: a plain writeFileSync could interleave with
+      // the Python worker's writes and truncate the document mid-read.
+      writeJSON(jobPath, jobData);
     }
   }
 
-  fs.writeFileSync(
-    path.join(DIRS.queue, `${clip.id}.json`),
-    JSON.stringify(meta, null, 2),
-    'utf8'
-  );
+  writeJSON(path.join(DIRS.queue, `${clip.id}.json`), meta);
 }
 
 export async function POST(request) {
