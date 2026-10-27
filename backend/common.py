@@ -73,12 +73,12 @@ def _replace_with_retry(src: Path, dst: Path) -> None:
     the original error is re-raised if the retries are exhausted.
     """
     delay = 0.02
-    for attempt in range(5):
+    for attempt in range(8):
         try:
             os.replace(src, dst)
             return
         except PermissionError:
-            if attempt == 4:
+            if attempt == 7:
                 raise
             time.sleep(delay)
             delay = min(delay * 2, 0.5)

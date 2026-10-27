@@ -19,6 +19,7 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -70,9 +71,20 @@ class JsonWriteTests(unittest.TestCase):
             try:
                 for _ in range(300):
                     try:
-                        json.loads(self.target.read_text(encoding="utf-8"))
+                        raw = self.target.read_text(encoding="utf-8")
                     except FileNotFoundError:
-                        pass  # only possible before the seed write
+                        continue  # only possible before the seed write
+                    except PermissionError:
+                        # Transient sharing violation while a writer renames
+                        # over the file - production readers tolerate exactly
+                        # this (read_job/readJSON catch OSError), so retry.
+                        time.sleep(0.01)
+                        continue
+                    try:
+                        json.loads(raw)
+                    except ValueError as exc:
+                        errors.append(AssertionError(f"reader saw invalid JSON: {exc}"))
+                        return
             except BaseException as exc:  # noqa: BLE001
                 errors.append(exc)
 

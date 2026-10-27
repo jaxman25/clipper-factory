@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { CalendarClock, Download, Loader2, Save, Send, Sparkles } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { CalendarClock, Download, Loader2, Pencil, Save, Send, Sparkles, X } from 'lucide-react';
 import { useStudio } from '@/components/studio/StudioProvider';
 import { dayKeyInTZ, formatInTZ, timeInTZ, zonedToIso } from '@/lib/time';
 import { cn } from '@/lib/cn';
@@ -15,49 +15,9 @@ export default function ClipCard({ clip }) {
   const [note, setNote] = useState(null);
   const [busy, setBusy] = useState('');
 
-  // Edit modal state
+  // Edit modal: opened from the "Edit clip" button below; the modal owns its
+  // form state and re-renders the clip through /api/clips/edit.
   const [isEditing, setIsEditing] = useState(false);
-  const [editStart, setEditStart] = useState(String(clip.start ?? 0));
-  const [editEnd, setEditEnd] = useState(String(clip.end ?? clip.duration ?? 0));
-  const [editNote, setEditNote] = useState(null);
-  const [editBusy, setEditBusy] = useState(false);
-
-  // Keep the edit values in sync when the clip prop changes
-  useEffect(() => {
-    if (isEditing) {
-      setEditStart(String(clip.start ?? 0));
-      setEditEnd(String(clip.end ?? clip.duration ?? 0));
-      setEditNote(null);
-      setEditBusy(false);
-    }
-  }, [clip.id, isEditing]);
-
-  async function saveEdit() {
-    setEditBusy(true);
-    setEditNote(null);
-    try {
-      const response = await fetch('/api/clips/edit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          clip_id: clip.id,
-          new_start: Number(editStart),
-          new_end: Number(editEnd),
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok || !data.ok) {
-        throw new Error(data.error || 'Could not save edits');
-      }
-      setEditNote({ kind: 'ok', text: 'Clip re-rendered. Close and refresh to preview.' });
-      setIsEditing(false);
-      refresh();
-    } catch (err) {
-      setEditNote({ kind: 'error', text: err.message });
-    } finally {
-      setEditBusy(false);
-    }
-  }
 
   useEffect(() => {
     setCaption(clip.caption || '');
@@ -158,6 +118,7 @@ export default function ClipCard({ clip }) {
     .map(([key]) => key);
 
   return (
+    <>
     <article className="card flex flex-col overflow-hidden">
       <div className="relative bg-black">
         <video
@@ -255,6 +216,10 @@ export default function ClipCard({ clip }) {
         <div className="mt-auto flex flex-wrap gap-2 pt-1">
           {!posted && (
             <>
+              <button type="button" onClick={() => setIsEditing(true)} className="btn btn-sm">
+                <Pencil className="h-3.5 w-3.5" />
+                Edit clip
+              </button>
               <button type="button" onClick={saveCaption} disabled={busy === 'caption'} className="btn btn-sm">
                 <Save className="h-3.5 w-3.5" />
                 {busy === 'caption' ? 'Saving…' : 'Save'}
@@ -285,6 +250,12 @@ export default function ClipCard({ clip }) {
         )}
       </div>
     </article>
+      <ClipEditModal
+        clip={clip}
+        open={isEditing}
+        onClose={() => setIsEditing(false)}
+      />
+    </>
   );
 }
 
@@ -292,10 +263,21 @@ export default function ClipCard({ clip }) {
  * Modal for editing a clip's start and end times.
  */
 export function ClipEditModal({ clip, open, onClose }) {
+  const { refresh, notify } = useStudio();
+  const videoRef = useRef(null);
   const [start, setStart] = useState(String(clip.start ?? 0));
   const [end, setEnd] = useState(String(clip.end ?? clip.duration ?? 0));
   const [note, setNote] = useState(null);
   const [busy, setBusy] = useState(false);
+
+  // The preview plays the clip file itself, so the editable window is the
+  // clip's current [start, end] range (seconds on the original source
+  // timeline, which is also what gets sent to the re-render API).
+  const windowStart = Number(clip.start ?? 0);
+  const windowEnd =
+    Number.isFinite(Number(clip.end)) && Number(clip.end) > windowStart
+      ? Number(clip.end)
+      : windowStart + Number(clip.duration ?? 0);
 
   useEffect(() => {
     if (open) {
@@ -303,12 +285,51 @@ export function ClipEditModal({ clip, open, onClose }) {
       setEnd(String(clip.end ?? clip.duration ?? 0));
       setNote(null);
       setBusy(false);
+      const video = videoRef.current;
+      if (video) video.currentTime = 0;
     }
   }, [open, clip.id]);
 
   if (!open) return null;
 
+  // Map a source-timestamp onto the previewed clip file and seek there, so
+  // dragging a slider shows exactly the frame at that timestamp.
+  function seekTo(absolute) {
+    const video = videoRef.current;
+    if (!video) return;
+    const relative = Number(absolute) - windowStart;
+    const limit =
+      Number.isFinite(video.duration) && video.duration > 0
+        ? video.duration
+        : Number(clip.duration || windowEnd - windowStart);
+    video.pause();
+    video.currentTime = Math.min(Math.max(relative, 0), Math.max(limit - 0.05, 0));
+  }
+
+  // Sliders stay inside the window and never cross each other.
+  function changeStart(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return;
+    const clamped = Math.min(Math.max(numeric, windowStart), Number(end) - 0.1);
+    setStart(String(Number(clamped.toFixed(1))));
+    seekTo(clamped);
+  }
+
+  function changeEnd(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return;
+    const clamped = Math.max(Math.min(numeric, windowEnd), Number(start) + 0.1);
+    setEnd(String(Number(clamped.toFixed(1))));
+    seekTo(clamped);
+  }
+
   async function handleSave() {
+    // Raw typing in the number boxes is allowed; clamp once at save time.
+    const rawStart = Number.isFinite(Number(start)) ? Number(start) : windowStart;
+    const rawEnd = Number.isFinite(Number(end)) ? Number(end) : windowEnd;
+    const payloadStart = Math.min(Math.max(rawStart, windowStart), rawEnd - 0.1);
+    const payloadEnd = Math.max(Math.min(rawEnd, windowEnd), payloadStart + 0.1);
+
     setBusy(true);
     setNote(null);
     try {
@@ -317,16 +338,17 @@ export function ClipEditModal({ clip, open, onClose }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           clip_id: clip.id,
-          new_start: Number(start),
-          new_end: Number(end),
+          new_start: Number(payloadStart.toFixed(1)),
+          new_end: Number(payloadEnd.toFixed(1)),
         }),
       });
       const data = await response.json();
       if (!response.ok || !data.ok) {
         throw new Error(data.error || 'Could not save edits');
       }
-      setNote({ kind: 'ok', text: 'Clip re-rendered with new start/end times.' });
       onClose();
+      notify('Clip re-rendered with new start/end times');
+      refresh();
     } catch (err) {
       setNote({ kind: 'error', text: err.message });
     } finally {
@@ -357,7 +379,9 @@ export function ClipEditModal({ clip, open, onClose }) {
 
         <div className="mt-4">
           <video
+            ref={videoRef}
             src={clip.media_url}
+            poster={clip.thumb_url}
             controls
             playsInline
             className="w-full rounded-lg border border-line bg-black/40 aspect-[9/16] max-h-[320px]"
@@ -370,34 +394,65 @@ export function ClipEditModal({ clip, open, onClose }) {
         <div className="mt-4 space-y-4">
           <div>
             <label htmlFor="edit-start" className="label">
-              Start time (seconds)
+              Start time ({windowStart}s – {windowEnd}s)
             </label>
             <input
               id="edit-start"
+              type="range"
+              min={windowStart}
+              max={windowEnd}
+              step={0.1}
+              value={start}
+              onChange={(event) => changeStart(event.target.value)}
+              className="mt-1.5 w-full accent-brand"
+              disabled={busy}
+            />
+            <input
+              id="edit-start-seconds"
               type="number"
               step="0.1"
-              min="0"
               value={start}
-              onChange={(e) => setStart(e.target.value)}
-              className="input"
+              onChange={(event) => {
+                setStart(event.target.value);
+                if (Number.isFinite(Number(event.target.value))) seekTo(event.target.value);
+              }}
+              className="input mt-1.5"
               disabled={busy}
             />
           </div>
           <div>
             <label htmlFor="edit-end" className="label">
-              End time (seconds)
+              End time ({windowStart}s – {windowEnd}s)
             </label>
             <input
               id="edit-end"
+              type="range"
+              min={windowStart}
+              max={windowEnd}
+              step={0.1}
+              value={end}
+              onChange={(event) => changeEnd(event.target.value)}
+              className="mt-1.5 w-full accent-brand"
+              disabled={busy}
+            />
+            <input
+              id="edit-end-seconds"
               type="number"
               step="0.1"
-              min="0"
               value={end}
-              onChange={(e) => setEnd(e.target.value)}
-              className="input"
+              onChange={(event) => {
+                setEnd(event.target.value);
+                if (Number.isFinite(Number(event.target.value))) seekTo(event.target.value);
+              }}
+              className="input mt-1.5"
               disabled={busy}
             />
           </div>
+          <p className="text-[11px] text-subtle">
+            New duration:{' '}
+            {Math.max((Number.isFinite(Number(end)) ? Number(end) : windowEnd) - (Number.isFinite(Number(start)) ? Number(start) : windowStart), 0).toFixed(1)}s
+            {' — '}drag a slider to preview that exact frame.
+          </p>
         </div>
 
         {note && (

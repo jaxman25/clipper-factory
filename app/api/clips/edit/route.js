@@ -1,94 +1,33 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { DIRS, findClip, sanitizeId, loadSettings, writeJSON } from '@/lib/store';
+import { DIRS, findClip, sanitizeId, writeJSON } from '@/lib/store';
+import { runPython } from '@/lib/spawn';
 
 // Re-render a queued clip with new user-chosen start and end times.
-// Reads the original source from downloads/, cuts it with FFmpeg, and
-// overwrites the .mp4 in the queue folder.
+//
+// The cut itself is done by the Python backend (backend/rerender.py), which
+// reuses the project's FFmpeg setup and atomically replaces the queued .mp4.
+// Source resolution: prefer the original source video still sitting in
+// downloads/ (kept when a job ran with --keep-source) and cut the requested
+// absolute window from it; otherwise fall back to the clip already on disk
+// and cut the equivalent window relative to that file. The latter keeps the
+// manual editor working after downloads have been cleaned up, which is the
+// normal case - sources are deleted as soon as a job finishes.
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const maxDuration = 120;
 
-function ffmpegBin() {
-  return process.env.FFMPEG_BIN || 'ffmpeg';
-}
+const SOURCE_EXTS = ['.mp4', '.mkv', '.webm'];
 
-/**
- * Re-render one clip from the original source video using the new
- * start/end times. The old .mp4 in the queue folder is replaced.
- */
-async function rerenderClip(clip) {
-  const sourceDir = path.join(DIRS.root, 'downloads');
-  const source = path.join(sourceDir, `${clip.id}.mp4`);
-  const outPath = path.join(DIRS.queue, `${clip.id}.mp4`);
-  const thumbPath = path.join(DIRS.queue, `${clip.id}.jpg`);
-
-  if (!fs.existsSync(source)) {
-    throw new Error(`Source video not found: ${source}`);
-  }
-
-  const args = [
-    ffmpegBin(),
-    '-y',
-    '-ss', String(clip.new_start),
-    '-t', String(clip.new_end - clip.new_start),
-    '-i', source,
-    '-c:v', 'libx264',
-    '-preset', 'veryfast',
-    '-crf', '21',
-    '-pix_fmt', 'yuv420p',
-    '-r', '30',
-    '-g', '60',
-    '-c:a', 'aac',
-    '-b:a', '128k',
-    '-ar', '44100',
-    '-ac', '2',
-    '-movflags', '+faststart',
-    '-t', String(clip.new_end - clip.new_start),
-    outPath,
-  ];
-
-  const { spawnSync } = await import('node:child_process');
-  const result = spawnSync(args[0], args.slice(1), { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] });
-
-  if (result.error) {
-    throw new Error(`FFmpeg spawn failed: ${result.error.message}`);
-  }
-  if (result.status !== 0) {
-    const stderr = (result.stderr || '').toString().trim();
-    const stdout = (result.stdout || '').toString().trim();
-    throw new Error(`FFmpeg failed (exit ${result.status}): ${stderr || stdout}`);
-  }
-
-  // Copy thumbnail if it exists and remove any stale one
-  if (fs.existsSync(clip.thumb)) {
-    fs.copyFileSync(clip.thumb, thumbPath);
-  } else {
-    fs.rmSync(thumbPath, { force: true });
-  }
-
-  // Update the clip metadata with the new segment bounds
-  const meta = { ...clip, ...clip.meta };
-  const job = JSON.parse(fs.readFileSync(path.join(DIRS.jobs, `${clip.id}.json`), 'utf8'));
-  meta.start = clip.new_start;
-  meta.end = clip.new_end;
-  meta.duration = Number(clip.new_end - clip.new_start).toFixed(2);
-  meta.manual_edited = true;
-
-  // Rewrite the job doc and the queue metadata
-  const jobPath = path.join(DIRS.jobs, `${job.id}.json`);
-  if (fs.existsSync(jobPath)) {
-    const jobData = JSON.parse(fs.readFileSync(jobPath, 'utf8'));
-    const clipIndex = jobData.clips?.findIndex((c) => c.id === clip.id);
-    if (clipIndex >= 0) {
-      jobData.clips[clipIndex] = meta;
-      // Atomic, unique-tmp write: a plain writeFileSync could interleave with
-      // the Python worker's writes and truncate the document mid-read.
-      writeJSON(jobPath, jobData);
+function findOriginalSource(jobId, clipId) {
+  for (const stem of [jobId, clipId]) {
+    if (!stem) continue;
+    for (const ext of SOURCE_EXTS) {
+      const candidate = path.join(DIRS.downloads, `${stem}${ext}`);
+      if (fs.existsSync(candidate)) return candidate;
     }
   }
-
-  writeJSON(path.join(DIRS.queue, `${clip.id}.json`), meta);
+  return null;
 }
 
 export async function POST(request) {
@@ -96,7 +35,7 @@ export async function POST(request) {
   try {
     body = await request.json();
   } catch (err) {
-    return Response.json({ ok: false, error: 'invalid JSON body' }, { status: 400 });
+    return Response.json({ ok: false, error: 'clip_id, new_start, and new_end are required' }, { status: 400 });
   }
 
   const { clip_id, new_start, new_end } = body || {};
@@ -105,19 +44,110 @@ export async function POST(request) {
     return Response.json({ ok: false, error: 'clip_id, new_start, and new_end are required' }, { status: 400 });
   }
 
-  if (new_end <= new_start) {
+  const start = Number(new_start);
+  const end = Number(new_end);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) {
+    return Response.json({ ok: false, error: 'new_start and new_end must be numbers' }, { status: 400 });
+  }
+  if (end <= start) {
     return Response.json({ ok: false, error: 'new_end must be greater than new_start' }, { status: 400 });
   }
 
-  const clip = findClip(clip_id);
+  const clip = findClip(sanitizeId(String(clip_id)));
   if (!clip) {
     return Response.json({ ok: false, error: 'clip not found' }, { status: 404 });
   }
 
-  try {
-    await rerenderClip({ ...clip, new_start, new_end });
-    return Response.json({ ok: true, message: 'Clip re-rendered with new start/end times' });
-  } catch (err) {
-    return Response.json({ ok: false, error: err.message }, { status: 500 });
+  // The editor works inside the clip's current window: the modal previews the
+  // clip file itself, so bounds outside [windowStart, windowEnd] could never
+  // be previewed and would silently disagree with the rendered result.
+  const clipMeta = clip.meta || {};
+  const windowStart = Number(clipMeta.start ?? 0);
+  const windowEndRaw = Number(clipMeta.end);
+  const windowEnd =
+    Number.isFinite(windowEndRaw) && windowEndRaw > windowStart
+      ? windowEndRaw
+      : windowStart + Number(clipMeta.duration || 0);
+  if (start < windowStart - 0.05 || (windowEnd > windowStart && end > windowEnd + 0.05)) {
+    return Response.json(
+      {
+        ok: false,
+        error: `Keep start/end within the current clip (${windowStart}s - ${windowEnd}s)`,
+      },
+      { status: 400 }
+    );
   }
+
+  const original = findOriginalSource(clipMeta.job_id, clip.id);
+  const source = original || clip.video;
+  // Absolute source timestamps map onto the fallback file's own timeline.
+  const cutStart = original ? start : start - windowStart;
+  const cutEnd = original ? end : end - windowStart;
+  const outPath = path.join(path.dirname(clip.video), `${clip.id}.mp4`);
+  const thumbPath = path.join(path.dirname(clip.video), `${clip.id}.jpg`);
+
+  const result = await runPython(
+    'backend/rerender.py',
+    [
+      '--source', source,
+      '--start', cutStart.toFixed(3),
+      '--end', cutEnd.toFixed(3),
+      '--out', outPath,
+      '--thumb', thumbPath,
+    ],
+    { timeoutMs: 115000 }
+  );
+
+  if (result.timedOut) {
+    return Response.json({ ok: false, error: 'Re-render timed out' }, { status: 500 });
+  }
+  if (result.code !== 0) {
+    const tail = (result.stderr || '').trim().slice(-600);
+    return Response.json(
+      { ok: false, error: tail || `Re-render failed (exit ${result.code})` },
+      { status: 500 }
+    );
+  }
+
+  // Update the clip metadata with the new segment bounds. The thumbnail is
+  // regenerated from the new cut by backend/rerender.py (--thumb), so the
+  // queue preview always matches the edited clip.
+  const duration = Number((end - start).toFixed(2));
+  const meta = {
+    id: clip.id,
+    file: `${clip.id}.mp4`,
+    thumb: `${clip.id}.jpg`,
+    ...clipMeta,
+    start: Number(start.toFixed(3)),
+    end: Number(end.toFixed(3)),
+    duration,
+    manual_edited: true,
+  };
+
+  // Best effort: keep the clip's entry inside its job document in sync. The
+  // job document may already be cleaned up, which must not fail the edit.
+  if (clipMeta.job_id) {
+    try {
+      const jobPath = path.join(DIRS.jobs, `${sanitizeId(String(clipMeta.job_id))}.json`);
+      const job = JSON.parse(fs.readFileSync(jobPath, 'utf8'));
+      const clipIndex = job.clips?.findIndex((entry) => entry.id === clip.id) ?? -1;
+      if (clipIndex >= 0) {
+        job.clips[clipIndex] = { ...job.clips[clipIndex], ...meta };
+        writeJSON(jobPath, job);
+      }
+    } catch (err) {
+      /* job document gone - the clip's own metadata below still updates */
+    }
+  }
+
+  writeJSON(path.join(path.dirname(clip.video), `${clip.id}.json`), meta);
+
+  return Response.json({
+    ok: true,
+    message: 'Clip re-rendered with new start/end times',
+    clip_id: clip.id,
+    start: meta.start,
+    end: meta.end,
+    duration: meta.duration,
+  });
 }
