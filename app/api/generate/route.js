@@ -72,8 +72,11 @@ export async function POST(request) {
 
   const mode = String(body.mode || 'viral');
   const numShorts = Math.max(1, Math.min(20, Number(body.num_shorts) || 10));
-  if (mode !== 'viral' && mode !== 'equal') {
-    return Response.json({ error: 'mode must be either "viral" or "equal"' }, { status: 400 });
+  if (mode !== 'viral' && mode !== 'equal' && mode !== 'transform') {
+    return Response.json(
+      { error: 'mode must be "viral", "equal" or "transform"' },
+      { status: 400 }
+    );
   }
   ensureDirs();
 

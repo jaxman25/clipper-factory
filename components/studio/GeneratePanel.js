@@ -222,6 +222,16 @@ export default function GeneratePanel({ autoFocus = false }) {
             >
               Equal Slices
             </button>
+            <button
+              type="button"
+              onClick={() => setMode('transform')}
+              title="AI rewrite + voiceover, renders 21s/30s/59s versions"
+              className={`relative w-full rounded-md px-4 py-2 text-sm font-medium transition ${
+                mode === 'transform' ? 'bg-brand text-fg' : 'bg-wash-strong text-muted hover:text-fg'
+              } ${running ? 'pointer-events-none opacity-50' : ''}`}
+            >
+              Transform
+            </button>
           </div>
         </div>
 

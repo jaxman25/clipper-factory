@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -295,6 +296,13 @@ def render_clip(
     info: dict | None = None,
     highlight_words: Sequence[str] | None = None,
     max_duration: float = 25.0,
+    voiceover: Path | None = None,
+    target_duration: float | None = None,
+    hook_seconds: float | None = None,
+    zoom_effect: bool = False,
+    progress_bar: bool = False,
+    handle: str = "",
+    music_db: float | None = None,
     **kwargs: Any,
 ) -> dict:
     """Render one vertical short. Returns render metadata.
@@ -312,16 +320,26 @@ def render_clip(
         )
 
     info = info or probe(source)
-    speed = float(cfg.get("playback_speed", 1.1) or 1.0)
-    speed = max(1.0, min(1.5, speed))
     raw_duration = max(1.0, end - start)
-    out_duration = raw_duration / speed
+    if voiceover:
+        # The AI voiceover drives timing: the source plays at natural rate
+        # and is stretched to the exact target length, so frames always
+        # cover the narration even when the source window runs short.
+        speed = 1.0
+        out_duration = float(target_duration or raw_duration)
+        setpts_expr = f"PTS*{out_duration / raw_duration:.6f}"
+        words = [w for w in words if w.start < out_duration]
+    else:
+        speed = float(cfg.get("playback_speed", 1.1) or 1.0)
+        speed = max(1.0, min(1.5, speed))
+        out_duration = raw_duration / speed
 
-    # Hard cap: the final video must never exceed max_duration seconds.
-    # The video is trimmed to this bound BEFORE the speed-up is applied, so
-    # the output is always exactly max_duration or less, regardless of the
-    # source segment length or the 1.1x speed-up.
-    out_duration = min(out_duration, max_duration)
+        # Hard cap: the final video must never exceed max_duration seconds.
+        # The video is trimmed to this bound BEFORE the speed-up is applied, so
+        # the output is always exactly max_duration or less, regardless of the
+        # source segment length or the 1.1x speed-up.
+        out_duration = min(out_duration, max_duration)
+        setpts_expr = f"PTS/{speed:.4f}"
 
     face = detect_face_center(source, start, end) if info.get("height") else None
     width = info.get("width") or 0
@@ -336,7 +354,11 @@ def render_clip(
         primary_color=str(cfg.get("caption_color", "#FFD700")),
         words_per_card=int(cfg.get("caption_words_per_card", 3) or 3),
         hook=hook,
-        hook_seconds=float(cfg.get("hook_seconds", 2) or 2),
+        hook_seconds=float(
+            hook_seconds
+            if hook_seconds is not None
+            else (cfg.get("hook_seconds", 2) or 2)
+        ),
         outro_text=str(cfg.get("outro_text", "") or ""),
         outro_seconds=float(cfg.get("outro_seconds", 2) or 2),
         transcript=transcript,
@@ -375,7 +397,9 @@ def render_clip(
     watermark = paths.WATERMARK if paths.WATERMARK.exists() else None
     if watermark:
         add_input("wm", ["-loop", "1", "-i", str(watermark)])
-    if not info.get("has_audio"):
+    if voiceover:
+        add_input("vo", ["-i", str(voiceover)])
+    if not info.get("has_audio") and not voiceover:
         add_input(
             "silence",
             ["-f", "lavfi", "-t", f"{out_duration:.3f}",
@@ -390,7 +414,7 @@ def render_clip(
         cx = int(max(0, min(width - cw, cx)))
         cy = int(max(0, min(height - ch, cy)))
         filters.append(
-            f"[0:v]setpts=PTS/{speed:.4f},crop={cw}:{ch}:{cx}:{cy},"
+            f"[0:v]setpts={setpts_expr},crop={cw}:{ch}:{cx}:{cy},"
             f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=increase,"
             f"crop={TARGET_W}:{TARGET_H},setsar=1,fps=30[base]"
         )
@@ -402,11 +426,11 @@ def render_clip(
                 f"crop={TARGET_W}:{TARGET_H},eq=brightness=-0.22:saturation=0.85,setsar=1,fps=30[bg]"
             )
             filters.append(
-                f"[0:v]setpts=PTS/{speed:.4f},scale={TARGET_W}:-2:flags=lanczos,fps=30[fg]"
+                f"[0:v]setpts={setpts_expr},scale={TARGET_W}:-2:flags=lanczos,fps=30[fg]"
             )
         else:
             filters.append(
-                f"[0:v]setpts=PTS/{speed:.4f},split=2[vb][vf]"
+                f"[0:v]setpts={setpts_expr},split=2[vb][vf]"
             )
             # Blur at 1/4 resolution: same look, ~16x cheaper on a free CPU.
             filters.append(
@@ -431,11 +455,23 @@ def render_clip(
             f"crop={TARGET_W}:{TARGET_H},setsar=1[base]"
         )
 
+    base_label = "base"
+    if zoom_effect:
+        # Punch-in zoom: +10% every 2 s (60 frames @30 fps), capped at 150%.
+        # Upscale 1.5x first so zoompan samples real pixels when zoomed.
+        filters.append(
+            f"[base]scale={int(TARGET_W * 1.5)}:{int(TARGET_H * 1.5)}:flags=lanczos,"
+            f"zoompan=z='min(1.5,1+0.1*floor(on/60))'"
+            f":x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+            f":d=1:s={TARGET_W}x{TARGET_H}:fps=30[zoomed]"
+        )
+        base_label = "zoomed"
+
     fonts = _fonts_dir()
     ass_filter = f"ass=filename='{_filter_path(ass_path)}'"
     if fonts:
         ass_filter += f":fontsdir='{_filter_path(fonts)}'"
-    filters.append(f"[base]{ass_filter}[captioned]")
+    filters.append(f"[{base_label}]{ass_filter}[captioned]")
 
     video_out = "captioned"
     if watermark:
@@ -447,8 +483,50 @@ def render_clip(
         )
         video_out = "branded"
 
+    handle_clean = re.sub(r"[^A-Za-z0-9_.-]", "", handle or "")
+    if handle_clean:
+        filters.append(
+            f"[{video_out}]drawtext=text='@{handle_clean}':"
+            f"fontcolor=white@0.92:fontsize=44:"
+            f"borderw=2:bordercolor=black@0.75:"
+            f"box=1:boxcolor=black@0.28:boxborderw=12:"
+            f"x=28:y=28[handled]"
+        )
+        video_out = "handled"
+
+    if progress_bar:
+        # Progress bar at the bottom, growing left-to-right. drawbox cannot
+        # animate: its expression `t` means thickness (and `fill` makes that
+        # huge), and crop's `t` is constant too - but `enable` DOES evaluate
+        # the timestamp per frame, so fixed segments gated by time accumulate
+        # into a smooth bar (segment count = % of clip elapsed).
+        seg_count = 20
+        seg_w = TARGET_W / seg_count
+        seg_h = 14
+        segs: list[str] = []
+        for sgi in range(seg_count):
+            x = int(round(sgi * seg_w))
+            w = int(round(seg_w)) + (TARGET_W - int(round(seg_count * seg_w)))
+            gate = out_duration * sgi / seg_count
+            segs.append(
+                f"drawbox=x={x}:y={TARGET_H - seg_h}:w={w}:h={seg_h}:"
+                f"color=0xC1A094@0.95:t=fill:enable='gte(t\\,{gate:.3f})'"
+            )
+        filters.append(f"[{video_out}]{','.join(segs)}[barred]")
+        video_out = "barred"
+
     mix_inputs: list[str] = []
-    if info.get("has_audio"):
+    if voiceover:
+        # The voiceover IS the track: source audio is never mixed in.
+        vo_chain = f"[{index['vo']}:a]atrim=0:{out_duration:.3f},asetpts=PTS-STARTPTS"
+        if out_duration > 0.6:
+            vo_chain += (
+                f",afade=t=in:st=0:d=0.1"
+                f",afade=t=out:st={max(0.0, out_duration - 0.25):.3f}:d=0.25"
+            )
+        filters.append(vo_chain + "[voice]")
+        mix_inputs.append("voice")
+    elif info.get("has_audio"):
         audio_chain = f"[0:a]atempo={speed:.4f}"
         if out_duration > 0.6:
             audio_chain += (
@@ -459,7 +537,11 @@ def render_clip(
         filters.append(audio_chain)
         mix_inputs.append("voice")
     if drum:
-        db = float(cfg.get("drum_volume_db", -22) or -22)
+        db = float(
+            music_db
+            if music_db is not None
+            else (cfg.get("drum_volume_db", -22) or -22)
+        )
         filters.append(
             f"[{index['drum']}:a]volume={db}dB,atrim=0:{out_duration:.3f},"
             f"asetpts=PTS-STARTPTS[bed]"
@@ -472,7 +554,7 @@ def render_clip(
             f"asetpts=PTS-STARTPTS[amb]"
         )
         mix_inputs.append("amb")
-    if not info.get("has_audio"):
+    if not voiceover and not info.get("has_audio"):
         filters.append(
             f"[{index['silence']}:a]atrim=0:{out_duration:.3f},asetpts=PTS-STARTPTS[voice]"
         )
@@ -480,8 +562,11 @@ def render_clip(
 
     if len(mix_inputs) > 1:
         joined = "".join(f"[{name}]" for name in mix_inputs)
+        # Voiceover tracks can end just before the target length; "longest"
+        # lets the music bed carry the tail to the exact output duration.
+        amix_span = "longest" if voiceover else "first"
         filters.append(
-            f"{joined}amix=inputs={len(mix_inputs)}:duration=first:"
+            f"{joined}amix=inputs={len(mix_inputs)}:duration={amix_span}:"
             f"dropout_transition=0:normalize=0,alimiter=limit=0.95[aout]"
         )
     else:

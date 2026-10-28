@@ -31,7 +31,7 @@ if str(HERE.parent) not in sys.path:
 
 try:
     from . import broll as broll_mod
-    from . import captions, common, paths, renderer, scheduling, telegram, viral
+    from . import captions, common, paths, renderer, scheduling, telegram, transform, viral
 except ImportError:  # direct execution: python backend/main.py
     import broll as broll_mod  # type: ignore
     import captions  # type: ignore
@@ -40,6 +40,7 @@ except ImportError:  # direct execution: python backend/main.py
     import renderer  # type: ignore
     import scheduling  # type: ignore
     import telegram  # type: ignore
+    import transform  # type: ignore
     import viral  # type: ignore
 
 WHISPER_DIR = Path(os.getenv("WHISPER_MODEL_DIR", "/tmp/whisper_models"))
@@ -380,6 +381,163 @@ def _relative_words(candidate: viral.Candidate, clip_start: float) -> list[capti
 _ACTIVE_JOB_ID = ""  # published by run(); signal handlers cannot see run()'s locals
 
 
+# (seconds, platform, id tag) - the three transformative outputs per job.
+TRANSFORM_FORMATS = ((21, "TikTok", "t21"), (30, "Reels", "t30"), (59, "Shorts", "t59"))
+
+
+def _render_transform(
+    *,
+    source: Path,
+    audio: Path,
+    info: dict,
+    duration: float,
+    segments_raw: list,
+    language: str,
+    job: "Job",
+    cfg: dict,
+    job_id: str,
+    job_dir: Path,
+    broll_path: Path | None,
+    hashtags: str,
+    source_url: str,
+    mode: str,
+) -> list[dict]:
+    """AI script rewrite -> edge-tts voiceover -> 21/30/59 s renders.
+
+    One transformative voiceover is generated per source video, then rendered
+    into the three platform lengths. Each output carries the zoompan punch-in,
+    the progress bar, the Pixabay B-roll fallback, the music bed at -20 dB and
+    the user's handle watermark. Returns the three queue items.
+    """
+    full_text = " ".join(
+        str(seg.get("text", "")).strip() for seg in segments_raw
+    ).strip()
+    if not full_text:
+        raise JobError("Transform mode needs a transcript - no speech found")
+
+    job.update(
+        stage="analyze",
+        progress=44,
+        message="Rewriting transcript into a transformative script (free LLM)",
+        language=language,
+    )
+    script, llm_source = transform.rewrite_script(full_text)
+    if not script:
+        raise JobError("Script rewriting produced an empty script")
+
+    job.update(progress=46, message="Generating AI voiceover (edge-tts)")
+    vo_path, vo_words = transform.synthesize_voiceover(script, job_dir / "voiceover.mp3")
+    vo_info = renderer.probe(vo_path)
+    if float(vo_info.get("duration") or 0.0) <= 0.5:
+        raise JobError("Voiceover is too short")
+
+    caption_words = [
+        captions.CaptionWord(
+            start=float(w["start"]), end=float(w["end"]), text=str(w["text"])
+        )
+        for w in vo_words
+    ]
+
+    # Visual bed: score the transcript like viral mode and start at the best
+    # window, clamped so a full 59 s render still fits the source.
+    bed_start = 0.0
+    try:
+        rms = viral.compute_rms(str(audio))
+        segments = viral.build_segments(segments_raw)
+        keywords = cfg.get("viral_keywords") or viral.DEFAULT_KEYWORDS
+        cands = viral.find_candidates(segments, rms, keywords, 30, 45)
+        best = viral.select_top(cands, 1, 30, 45)
+        if best:
+            bed_start = float(best[0].start)
+    except Exception as exc:  # scoring is cosmetic here - never fail the job
+        common.warn(f"transform bed selection fell back to t=0: {exc}")
+    max_bed = min(59.0, max(1.0, duration))
+    bed_start = (
+        max(0.0, min(bed_start, duration - max_bed)) if duration > max_bed else 0.0
+    )
+
+    handle = (
+        os.getenv("WATERMARK_HANDLE", "").strip()
+        or str(cfg.get("handle", "") or "").strip()
+    )
+    hook = script.split(". ")[0].strip().rstrip(".") if script else ""
+    base_title = hook.title() if hook else "Transformed Story"
+
+    queue_items: list[dict] = []
+    slots = scheduling.next_slots(cfg, len(TRANSFORM_FORMATS))
+    total = len(TRANSFORM_FORMATS)
+    for idx, (seconds, platform, tag) in enumerate(TRANSFORM_FORMATS):
+        clip_id = f"{job_id}-{idx + 1:02d}-{tag}"
+        job.update(
+            stage="render",
+            progress=50 + idx * 15,
+            message=f"Rendering {seconds}s {platform} version ({idx + 1}/{total})",
+        )
+        target = float(seconds)
+        win_end = min(duration, bed_start + target)
+        clip_path = job_dir / f"{clip_id}.mp4"
+        thumb_path = job_dir / f"{clip_id}.jpg"
+        words_for = [w for w in caption_words if w.start < target]
+        render_meta = renderer.render_clip(
+            source,
+            clip_path,
+            bed_start,
+            win_end,
+            words_for,
+            cfg,
+            hook=hook,
+            transcript=script,
+            broll=broll_path,
+            thumb_path=thumb_path,
+            info=info,
+            max_duration=target,
+            voiceover=vo_path,
+            target_duration=target,
+            hook_seconds=3.0,
+            zoom_effect=True,
+            progress_bar=True,
+            handle=handle,
+            music_db=-20.0,
+        )
+        scheduled = slots[idx] if idx < len(slots) else scheduling.next_slot(cfg)
+        item = {
+            "id": clip_id,
+            "job_id": job_id,
+            "source_url": source_url,
+            "source_title": base_title,
+            "title": f"{base_title} ({seconds}s {platform})",
+            "hook": hook,
+            "caption": f"{hook} {hashtags}".strip(),
+            "transcript": script,
+            "viral_score": None,
+            "reasons": [f"transform:{llm_source}", f"voiceover:{seconds}s"],
+            "start": bed_start,
+            "end": win_end,
+            "duration": render_meta["duration"],
+            "width": render_meta["width"],
+            "height": render_meta["height"],
+            "face_detected": render_meta["face_detected"],
+            "file": f"{clip_id}.mp4",
+            "thumb": f"{clip_id}.jpg",
+            "export_path": str(clip_path),
+            "scheduled_for": scheduling.to_iso(scheduled),
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "posted_at": None,
+            "platforms": {},
+            "mode": mode,
+            "llm": llm_source,
+            "voiceover": "edge-tts",
+        }
+        if thumb_path.exists():
+            shutil.copy2(thumb_path, paths.QUEUE / thumb_path.name)
+        shutil.copy2(clip_path, paths.QUEUE / f"{clip_id}.mp4")
+        common.write_json(paths.QUEUE / f"{clip_id}.json", item)
+        queue_items.append(item)
+
+    job.update(stage="render", progress=94, message="Transform renders complete")
+    return queue_items
+
+
 def _abort_handler(signum, frame) -> None:
     """Interrupt point: cancel the running job and exit cleanly."""
     active = _ACTIVE_JOB_ID
@@ -521,7 +679,7 @@ def run(args: argparse.Namespace) -> int:
                 message=f"Rendering {len(selected)} vertical shorts (equal slices)",
                 candidates=len(selected),
             )
-        else:
+        elif mode == "viral":
             # Viral mode: keep the existing AI-driven transcript logic.
             segments_raw, language, _ = transcribe(audio, job)
             job.update(
@@ -556,6 +714,13 @@ def run(args: argparse.Namespace) -> int:
                 message=f"Rendering {len(selected)} vertical shorts",
                 candidates=len(candidates),
             )
+        else:
+            # Transform mode: transcribe only. The transform renderer below
+            # rewrites the script, speaks it with edge-tts and produces the
+            # 21/30/59 s outputs, so no per-candidate windows are needed.
+            segments_raw, language, _ = transcribe(audio, job)
+            candidates = []
+            selected = []
 
         broll_path = None
         if os.getenv("PIXABAY_API_KEY", "").strip():
@@ -567,6 +732,24 @@ def run(args: argparse.Namespace) -> int:
         queue_items: list[dict[str, Any]] = []
         slots = scheduling.next_slots(cfg, len(selected))
         hashtags = str(cfg.get("hashtags", ""))
+
+        if mode == "transform":
+            queue_items = _render_transform(
+                source=source,
+                audio=audio,
+                info=info,
+                duration=duration,
+                segments_raw=segments_raw,
+                language=language,
+                job=job,
+                cfg=cfg,
+                job_id=job_id,
+                job_dir=job_dir,
+                broll_path=broll_path,
+                hashtags=hashtags,
+                source_url=args.url or str(source),
+                mode=mode,
+            )
 
         for index, candidate in enumerate(selected, start=1):
             clip_id = f"{job_id}-{index:02d}"
@@ -659,38 +842,39 @@ def run(args: argparse.Namespace) -> int:
                     max_duration=cfg.get("clip_max_seconds", 25) or 25,
                 )
 
-        scheduled = slots[index - 1] if index - 1 < len(slots) else scheduling.next_slot(cfg)
-        item = {
-            "id": clip_id,
-            "job_id": job_id,
-            "source_url": args.url or str(source),
-            "source_title": title,
-            "title": title,
-            "hook": hook,
-            "caption": viral.social_caption(candidate, hashtags) if mode == "viral" else transcript,
-            "transcript": transcript,
-            "viral_score": round(candidate.score, 1) if mode == "viral" else None,
-            "reasons": candidate.reasons if mode == "viral" else [],
-            "start": clip_start,
-            "end": clip_end,
-            "duration": render_meta["duration"],
-            "width": render_meta["width"],
-            "height": render_meta["height"],
-            "face_detected": render_meta["face_detected"],
-            "file": f"{clip_id}.mp4",
-            "thumb": f"{clip_id}.jpg",
-            "export_path": str(clip_path),
-            "scheduled_for": scheduling.to_iso(scheduled),
-            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "posted_at": None,
-            "platforms": {},
-            "mode": mode,
-        }
-        if thumb_path.exists():
-            shutil.copy2(thumb_path, paths.QUEUE / thumb_path.name)
-        shutil.copy2(clip_path, paths.QUEUE / f"{clip_id}.mp4")
-        common.write_json(paths.QUEUE / f"{clip_id}.json", item)
-        queue_items.append(item)
+        if mode != "transform":
+            scheduled = slots[index - 1] if index - 1 < len(slots) else scheduling.next_slot(cfg)
+            item = {
+                "id": clip_id,
+                "job_id": job_id,
+                "source_url": args.url or str(source),
+                "source_title": title,
+                "title": title,
+                "hook": hook,
+                "caption": viral.social_caption(candidate, hashtags) if mode == "viral" else transcript,
+                "transcript": transcript,
+                "viral_score": round(candidate.score, 1) if mode == "viral" else None,
+                "reasons": candidate.reasons if mode == "viral" else [],
+                "start": clip_start,
+                "end": clip_end,
+                "duration": render_meta["duration"],
+                "width": render_meta["width"],
+                "height": render_meta["height"],
+                "face_detected": render_meta["face_detected"],
+                "file": f"{clip_id}.mp4",
+                "thumb": f"{clip_id}.jpg",
+                "export_path": str(clip_path),
+                "scheduled_for": scheduling.to_iso(scheduled),
+                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "posted_at": None,
+                "platforms": {},
+                "mode": mode,
+            }
+            if thumb_path.exists():
+                shutil.copy2(thumb_path, paths.QUEUE / thumb_path.name)
+            shutil.copy2(clip_path, paths.QUEUE / f"{clip_id}.mp4")
+            common.write_json(paths.QUEUE / f"{clip_id}.json", item)
+            queue_items.append(item)
 
         # Free disk on /tmp: drop the source once it is no longer needed.
         manifest = {
@@ -778,7 +962,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--local-file", help="Use a local video file instead of downloading")
     parser.add_argument("--num-shorts", type=int, default=10, help="How many clips to render (default 10)")
     parser.add_argument("--job-id", help="Stable job id supplied by the dashboard/bot")
-    parser.add_argument("--mode", choices=["viral", "equal"], default="viral", help="Detection mode: 'viral' (best 30-45s clips) or 'equal' (evenly sliced)")
+    parser.add_argument("--mode", choices=["viral", "equal", "transform"], default="viral", help="Detection mode: 'viral' (best 30-45s clips), 'equal' (evenly sliced) or 'transform' (AI rewrite + voiceover, 21/30/59s outputs)")
     parser.add_argument("--keep-source", action="store_true", help="Keep the downloaded source file")
     parser.add_argument("--no-notify", action="store_true", help="Do not send Telegram messages")
     return parser
