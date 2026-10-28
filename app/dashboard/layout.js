@@ -9,10 +9,14 @@ export const metadata = {
 export default function DashboardLayout({ children }) {
   return (
     <StudioProvider>
-      <div className="min-h-screen bg-ink">
+      {/* overflow-x-clip (not hidden): nothing may widen the page past the
+          viewport on mobile, but clip does not create a scroll container, so
+          the sticky mobile top bar keeps working. Fixed overlays (drawer,
+          modals, toast) sit outside the clip because they are position:fixed. */}
+      <div className="min-h-screen overflow-x-clip bg-ink">
         <Sidebar />
         <div className="lg:pl-[264px]">
-          <header className="flex justify-end px-5 pt-4 sm:px-8 lg:px-10">
+          <header className="flex max-w-full justify-end px-5 pt-4 sm:px-8 lg:px-10">
             <UserBadge />
           </header>
           <main className="mx-auto w-full max-w-[1240px] px-5 pb-24 pt-4 sm:px-8 lg:px-10 lg:pt-6">

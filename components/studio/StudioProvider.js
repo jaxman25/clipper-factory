@@ -246,7 +246,7 @@ export function StudioProvider({ children }) {
       {toastText && (
         <div
           role="status"
-          className="fixed bottom-6 left-1/2 z-[60] w-[min(92vw,420px)] -translate-x-1/2 animate-rise rounded-xl border border-line border-l-2 border-l-brand bg-raised px-4 py-3 text-sm text-fg shadow-2xl"
+          className="fixed bottom-6 left-1/2 z-[60] w-[min(92vw,420px)] -translate-x-1/2 animate-rise rounded-xl border border-line border-l-2 border-l-brand bg-raised px-4 py-3 break-words text-sm text-fg shadow-2xl"
         >
           {toastText}
         </div>

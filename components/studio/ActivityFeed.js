@@ -200,7 +200,9 @@ export default function ActivityFeed({ limit = 8, pollMs = 15000 }) {
         <li key={`${entry.ts}-${index}`} className="flex gap-3 py-2.5">
           <span className={cn('mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full', TONE[entry.level] || TONE.info)} />
           <div className="min-w-0">
-            <p className="text-[12px] leading-snug text-fg/80">{entry.message}</p>
+            {/* break-words: log lines carry long URLs/paths that would
+                otherwise push the page wider than the viewport. */}
+            <p className="break-words text-[12px] leading-snug text-fg/80">{entry.message}</p>
             <p className="mt-0.5 text-[10px] tabular-nums text-subtle/80">
               {entry.ts
                 ? new Date(entry.ts).toLocaleTimeString('en-GB', { hour12: false })

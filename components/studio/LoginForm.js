@@ -18,16 +18,21 @@ function describeError(code) {
 }
 
 /**
- * Login form: Google button (only when configured) + email/password.
+ * Login form: Google button (disabled with a tooltip when Google OAuth is
+ * not configured) + email/password. The form is both sign-in and sign-up —
+ * the first sign-in with an email creates the account.
  * Failures come back as ?error=<code> on the URL, mapped to friendly text.
  */
-export default function LoginForm({ providers = [], callbackUrl = '/dashboard', initialError = '' }) {
+export default function LoginForm({
+  googleConfigured = false,
+  callbackUrl = '/dashboard',
+  initialError = '',
+}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState('');
 
-  const googleEnabled = providers.some((provider) => provider.id === 'google');
   const error = describeError(initialError) || localError;
 
   async function submit(event) {
@@ -68,25 +73,27 @@ export default function LoginForm({ providers = [], callbackUrl = '/dashboard', 
           </p>
         ) : null}
 
-        {googleEnabled ? (
-          <>
-            <button
-              type="button"
-              className="btn mt-5 w-full"
-              disabled={busy}
-              onClick={() => signIn('google', { callbackUrl })}
-            >
-              Continue with Google
-            </button>
-            <div className="my-4 flex items-center gap-3">
-              <span className="h-px flex-1 bg-line" />
-              <span className="text-[11px] uppercase tracking-widest text-subtle">or</span>
-              <span className="h-px flex-1 bg-line" />
-            </div>
-          </>
-        ) : (
-          <div className="mt-5" />
-        )}
+        <button
+          type="button"
+          className="btn mt-5 w-full"
+          disabled={busy || !googleConfigured}
+          title={googleConfigured ? undefined : 'Google login not configured yet'}
+          aria-disabled={busy || !googleConfigured}
+          onClick={() => googleConfigured && signIn('google', { callbackUrl })}
+        >
+          Continue with Google
+        </button>
+
+        <div className="my-4 flex items-center gap-3">
+          <span className="h-px flex-1 bg-line" />
+          <span className="text-[11px] uppercase tracking-widest text-subtle">or</span>
+          <span className="h-px flex-1 bg-line" />
+        </div>
+
+        <p className="text-xs leading-relaxed text-muted">
+          Don't have an account? Just enter your email and a password, and we will create one for
+          you.
+        </p>
 
         <form onSubmit={submit} className="flex flex-col gap-3">
           <label className="flex flex-col gap-1.5">
@@ -115,13 +122,12 @@ export default function LoginForm({ providers = [], callbackUrl = '/dashboard', 
           </label>
           <button type="submit" className="btn btn-primary mt-1 w-full" disabled={busy}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {busy ? 'Signing in…' : 'Sign in'}
+            {busy ? 'Signing in…' : 'Sign In / Sign Up'}
           </button>
         </form>
 
         <p className="mt-4 text-center text-[11px] leading-relaxed text-subtle">
-          First time signing in? Your account is created automatically with{' '}
-          <b className="text-muted">5 free credits</b>.
+          New accounts start with <b className="text-muted">5 free credits</b>.
         </p>
       </div>
     </div>

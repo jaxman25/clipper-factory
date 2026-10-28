@@ -15,6 +15,13 @@ function safeCallback(value) {
 export default function LoginPage({ searchParams }) {
   const error = String(searchParams?.error || '');
   const callbackUrl = safeCallback(searchParams?.callbackUrl);
+  const googleConfigured = publicProviders().some((provider) => provider.id === 'google');
 
-  return <LoginForm providers={publicProviders()} callbackUrl={callbackUrl} initialError={error} />;
+  return (
+    <LoginForm
+      googleConfigured={googleConfigured}
+      callbackUrl={callbackUrl}
+      initialError={error}
+    />
+  );
 }
