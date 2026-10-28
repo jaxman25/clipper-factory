@@ -842,7 +842,9 @@ def run(args: argparse.Namespace) -> int:
                     max_duration=cfg.get("clip_max_seconds", 25) or 25,
                 )
 
-        if mode != "transform":
+            # Queue this clip right away so EVERY rendered clip lands in the
+            # queue. This block used to sit outside the loop, which meant only
+            # the last clip of a job was ever queued.
             scheduled = slots[index - 1] if index - 1 < len(slots) else scheduling.next_slot(cfg)
             item = {
                 "id": clip_id,
