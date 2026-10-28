@@ -1,5 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { getServerSession } from 'next-auth';
+import { deductCredit, ensureUser, getCredits, isAdminEmail, normalizeEmail } from '@/lib/credits';
+import { LOCAL_HOSTNAMES, requestHostname } from '@/lib/auth';
+import { authOptions } from '@/lib/next-auth';
 import { DIRS, ensureDirs, listJobs, markJobErrorIfRunning, readJob, sanitizeId, updateJSON, writeJSONIfAbsent } from '@/lib/store';
 import { startPython } from '@/lib/spawn';
 
@@ -27,6 +31,32 @@ export async function POST(request) {
     body = await request.json();
   } catch (err) {
     return Response.json({ error: 'invalid JSON body' }, { status: 400 });
+  }
+
+  // ---- Credit gate (spec 04) ------------------------------------------
+  // Localhost bypasses everything (owner testing). Admins (ADMIN_EMAIL)
+  // generate unlimited, forever. Public users need a session and pay 1
+  // credit per accepted job; 0 credits = 403 with a nudge to buy more.
+  // The gate runs before any work so an empty balance never touches the
+  // lock, the queue or the worker.
+  const host = requestHostname(request);
+  let payerEmail = null;
+  if (!LOCAL_HOSTNAMES.has(host)) {
+    const session = await getServerSession(authOptions);
+    const email = normalizeEmail(session?.user?.email);
+    if (!email) {
+      return Response.json({ error: 'Sign in to generate videos' }, { status: 401 });
+    }
+    if (!isAdminEmail(email)) {
+      ensureUser(email);
+      if (getCredits(email) <= 0) {
+        return Response.json(
+          { error: 'You are out of credits - buy more to generate another video.' },
+          { status: 403 }
+        );
+      }
+      payerEmail = email;
+    }
   }
 
   const url = String(body.url || '').trim();
@@ -158,11 +188,20 @@ export async function POST(request) {
     );
   });
 
+  // Charge only once the worker is actually accepted: a failed spawn never
+  // consumes a credit (the error returns above happen before this point).
+  let creditsLeft = null;
+  if (payerEmail) {
+    const result = deductCredit(payerEmail);
+    creditsLeft = result.credits;
+  }
+
   return Response.json({
     ok: true,
     job_id: jobId,
     pid: worker.pid,
     log: worker.log,
     mode: mode,
+    ...(payerEmail ? { credits: creditsLeft } : {}),
   }, { status: 202 });
 }
