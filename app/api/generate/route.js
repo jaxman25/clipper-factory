@@ -78,6 +78,11 @@ export async function POST(request) {
       { status: 400 }
     );
   }
+  // Transform mode fields (anti-flag pipeline)
+  const sourceUrl = url;
+  const originalChannel = String(body.original_channel || '').trim();
+  const transformSpeed = Number(body.transform_speed);
+  const maxClipSeconds = Math.max(1, Math.min(120, Number(body.clip_max_seconds) || 25));
   ensureDirs();
 
   // Refuse to stampede the free CPU with a second whisper/ffmpeg job.
@@ -133,7 +138,17 @@ export async function POST(request) {
   try {
     worker = startPython(
       'backend/main.py',
-      ['--url', url, '--job-id', jobId, '--num-shorts', String(numShorts), '--mode', mode],
+      [
+        '--url', url,
+        '--job-id', jobId,
+        '--num-shorts', String(numShorts),
+        '--mode', mode,
+        ...(originalChannel ? ['--original-channel', originalChannel] : []),
+        transformSpeed >= 1.1 && transformSpeed <= 1.2
+          ? ['--transform-speed', String(transformSpeed)]
+          : [],
+        ['--clip-max-seconds', String(maxClipSeconds)],
+      ],
       jobId
     );
   } catch (err) {

@@ -1,12 +1,16 @@
 """Posting-slot maths shared by the generator, scheduler and bot."""
 from __future__ import annotations
 
+import random
 from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any
 from zoneinfo import ZoneInfo
 
 DEFAULT_SLOTS = ["19:00", "21:00"]
 FALLBACK_OFFSETS = {"africa/nairobi": 3}
+# Anti-flag scheduling: slots land somewhere in a +/-2h window so posting
+# times never line up across accounts or look bot-driven.
+JITTER_SECONDS = 2 * 60 * 60
 
 
 def zone(cfg: dict[str, Any] | None = None) -> tzinfo:
@@ -45,6 +49,23 @@ def parse_iso(value: str | None, cfg: dict[str, Any] | None = None) -> datetime 
 
 def to_iso(dt: datetime) -> str:
     return dt.isoformat(timespec="seconds")
+
+
+def jitter(
+    dt: datetime,
+    seconds: int = JITTER_SECONDS,
+    rng: Any = None,
+) -> datetime:
+    """Shift a posting slot by a random +/-``seconds`` window.
+
+    The result is floored at now + 60s so a queue entry can never be
+    scheduled in the past. ``rng`` accepts ``random`` or a seeded
+    ``random.Random`` for deterministic tests.
+    """
+    r = rng or random
+    out = dt + timedelta(seconds=r.uniform(-seconds, seconds))
+    floor = datetime.now().astimezone() + timedelta(seconds=60)
+    return out if out >= floor else floor
 
 
 def next_slots(cfg: dict[str, Any] | None, count: int, after: datetime | None = None) -> list[datetime]:

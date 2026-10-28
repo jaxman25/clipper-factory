@@ -218,13 +218,17 @@ def release_lock(job_id: str | None = None) -> None:
         common.warn(f"generate.lock not owned by {job_id!r}; left untouched")
 
 
-def download_source(url: str, job_id: str, job: Job) -> tuple[Path, str]:
+def download_source(url: str, job_id: str, job: Job) -> tuple[Path, str, str]:
     import yt_dlp
 
     job.update(stage="download", progress=2, message="Downloading source video")
     opts: dict[str, Any] = {
         "outtmpl": str(paths.DOWNLOADS / f"{job_id}.%(ext)s"),
-        "format": "bv*[height<=1080][ext=mp4]+ba[ext=m4a]/b[height<=1080]/bv*+ba/b",
+        # Prefer a single merged mp4 so extract_audio gets one readable file.
+        # Without bestvideo+bestaudio+merge, YouTube returns separate streams
+        # and yt-dlp can leave an mp4 that contains only metadata (0 audio samples),
+        # which makes faster-whisper see "no speech" (WAV too short / silent).
+        "format": "bv*+ba/b",
         "merge_output_format": "mp4",
         "noplaylist": True,
         "quiet": True,
@@ -268,6 +272,11 @@ def download_source(url: str, job_id: str, job: Job) -> tuple[Path, str]:
         ) from exc
 
     title = (info or {}).get("title") or "African tale"
+    # Original creator handle for the anti-flag attribution line; yt-dlp
+    # already returned it inside the download metadata (no extra request).
+    channel = str(
+        (info or {}).get("channel") or (info or {}).get("uploader") or ""
+    ).strip()
     candidates = sorted(
         glob.glob(str(paths.DOWNLOADS / f"{job_id}*.mp4"))
         + glob.glob(str(paths.DOWNLOADS / f"{job_id}*.mkv"))
@@ -275,7 +284,7 @@ def download_source(url: str, job_id: str, job: Job) -> tuple[Path, str]:
     )
     if not candidates:
         raise JobError("Download finished but no video file was produced")
-    return Path(candidates[0]), title
+    return Path(candidates[0]), title, channel
 
 
 def extract_audio(video: Path, job_id: str) -> Path:
@@ -317,6 +326,9 @@ def transcribe(audio: Path, job: Job) -> tuple[list[dict], str, float]:
 
     job.update(progress=22, message="Transcribing audio")
     try:
+        # VAD filter MUST be disabled: Rick Astley's track has loud music that
+        # triggers the VAD as "non-speech" and silently drops every segment.
+        # Faster-whisper returns 0 segments with vad_filter=True here.
         segment_iter, info = model.transcribe(
             str(audio),
             word_timestamps=True,
@@ -327,8 +339,9 @@ def transcribe(audio: Path, job: Job) -> tuple[list[dict], str, float]:
             # Greedy decoding keeps only one hypothesis alive (no beam search
             # scratch space) - much lighter on a 512 MB box.
             beam_size=1,
-            # Skip silent sections up front so they never reach the decoder.
-            vad_filter=True,
+            # VAD filter disabled: music content triggers false "non-speech"
+            # detection and silently drops segments without warning.
+            vad_filter=False,
             condition_on_previous_text=False,
         )
     except Exception as exc:
@@ -400,6 +413,7 @@ def _render_transform(
     broll_path: Path | None,
     hashtags: str,
     source_url: str,
+    channel: str = "",
     mode: str,
 ) -> list[dict]:
     """AI script rewrite -> edge-tts voiceover -> 21/30/59 s renders.
@@ -424,6 +438,12 @@ def _render_transform(
     script, llm_source = transform.rewrite_script(full_text)
     if not script:
         raise JobError("Script rewriting produced an empty script")
+
+    job.update(
+        progress=45,
+        message="Generating titles, descriptions and hashtags",
+    )
+    meta, meta_source = transform.generate_metadata(script, channel)
 
     job.update(progress=46, message="Generating AI voiceover (edge-tts)")
     vo_path, vo_words = transform.synthesize_voiceover(script, job_dir / "voiceover.mp3")
@@ -451,9 +471,17 @@ def _render_transform(
             bed_start = float(best[0].start)
     except Exception as exc:  # scoring is cosmetic here - never fail the job
         common.warn(f"transform bed selection fell back to t=0: {exc}")
-    max_bed = min(59.0, max(1.0, duration))
+    # Footage runs 1.1x-1.2x while the voiceover stays at 1.0x: the visual
+    # window is sized x footage_speed and the renderer compresses it back to
+    # the exact target with setpts (window/target = 1/speed -> 1.1-1.2x).
+    footage_speed = max(
+        1.1, min(1.2, float(cfg.get("transform_speed", 1.15) or 1.15))
+    )
+    max_window = min(59.0 * footage_speed, duration)
     bed_start = (
-        max(0.0, min(bed_start, duration - max_bed)) if duration > max_bed else 0.0
+        max(0.0, min(bed_start, duration - max_window))
+        if duration > max_window
+        else 0.0
     )
 
     handle = (
@@ -474,7 +502,7 @@ def _render_transform(
             message=f"Rendering {seconds}s {platform} version ({idx + 1}/{total})",
         )
         target = float(seconds)
-        win_end = min(duration, bed_start + target)
+        win_end = min(duration, bed_start + target * footage_speed)
         clip_path = job_dir / f"{clip_id}.mp4"
         thumb_path = job_dir / f"{clip_id}.jpg"
         words_for = [w for w in caption_words if w.start < target]
@@ -499,7 +527,8 @@ def _render_transform(
             handle=handle,
             music_db=-20.0,
         )
-        scheduled = slots[idx] if idx < len(slots) else scheduling.next_slot(cfg)
+        slot = slots[idx] if idx < len(slots) else scheduling.next_slot(cfg)
+        scheduled = scheduling.jitter(slot)
         item = {
             "id": clip_id,
             "job_id": job_id,
@@ -527,6 +556,12 @@ def _render_transform(
             "mode": mode,
             "llm": llm_source,
             "voiceover": "edge-tts",
+            "metadata_variants": meta,
+            "metadata_source": meta_source,
+            "original_channel": channel,
+            "attribution": transform.attribution_line(channel),
+            "speed": render_meta.get("speed"),
+            "speed": render_meta.get("speed"),
         }
         if thumb_path.exists():
             shutil.copy2(thumb_path, paths.QUEUE / thumb_path.name)
@@ -608,6 +643,7 @@ def run(args: argparse.Namespace) -> int:
         _ensure_tools()
         acquire_lock(job_id)
         locked = True
+        channel = ""
         if args.local_file:
             source = Path(args.local_file).expanduser().resolve()
             if not source.exists():
@@ -617,7 +653,14 @@ def run(args: argparse.Namespace) -> int:
         else:
             if not args.url:
                 raise JobError("A YouTube URL or --local-file is required")
-            source, title = download_source(args.url, job_id, job)
+            source, title, channel = download_source(args.url, job_id, job)
+        # Local files carry no channel: env/config can still name the original
+        # creator so attribution keeps working for re-uploaded sources.
+        channel = (
+            channel
+            or os.getenv("ORIGINAL_CHANNEL", "").strip()
+            or str(cfg.get("original_channel") or "").strip()
+        )
 
         info = renderer.probe(source)
         duration = info.get("duration") or 0.0
@@ -722,6 +765,9 @@ def run(args: argparse.Namespace) -> int:
             candidates = []
             selected = []
 
+            if not segments_raw:
+                raise JobError("Transform mode needs a transcript - no speech found")
+
         broll_path = None
         if os.getenv("PIXABAY_API_KEY", "").strip():
             broll_path = broll_mod.fetch()
@@ -748,6 +794,7 @@ def run(args: argparse.Namespace) -> int:
                 broll_path=broll_path,
                 hashtags=hashtags,
                 source_url=args.url or str(source),
+                channel=channel,
                 mode=mode,
             )
 
@@ -845,7 +892,14 @@ def run(args: argparse.Namespace) -> int:
             # Queue this clip right away so EVERY rendered clip lands in the
             # queue. This block used to sit outside the loop, which meant only
             # the last clip of a job was ever queued.
-            scheduled = slots[index - 1] if index - 1 < len(slots) else scheduling.next_slot(cfg)
+            seed_text = (transcript or hook or title or "").strip()
+            meta, meta_source = transform.generate_metadata(seed_text, channel)
+            slot = (
+                slots[index - 1]
+                if index - 1 < len(slots)
+                else scheduling.next_slot(cfg)
+            )
+            scheduled = scheduling.jitter(slot)
             item = {
                 "id": clip_id,
                 "job_id": job_id,
@@ -871,6 +925,11 @@ def run(args: argparse.Namespace) -> int:
                 "posted_at": None,
                 "platforms": {},
                 "mode": mode,
+                "metadata_variants": meta,
+                "metadata_source": meta_source,
+                "original_channel": channel,
+                "attribution": transform.attribution_line(channel),
+                "speed": render_meta.get("speed"),
             }
             if thumb_path.exists():
                 shutil.copy2(thumb_path, paths.QUEUE / thumb_path.name)

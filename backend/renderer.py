@@ -330,8 +330,11 @@ def render_clip(
         setpts_expr = f"PTS*{out_duration / raw_duration:.6f}"
         words = [w for w in words if w.start < out_duration]
     else:
-        speed = float(cfg.get("playback_speed", 1.1) or 1.0)
-        speed = max(1.0, min(1.5, speed))
+        speed = float(cfg.get("playback_speed", 1.1) or 1.1)
+        # Anti-flag rule: the original footage always runs 1.1x-1.2x
+        # (setpts + atempo together). The AI voiceover branch above stays at
+        # 1.0x because its input is the TTS track, not the source audio.
+        speed = max(1.1, min(1.2, speed))
         out_duration = raw_duration / speed
 
         # Hard cap: the final video must never exceed max_duration seconds.
@@ -597,6 +600,9 @@ def render_clip(
     return {
         "output": str(out_path),
         "duration": round(out_duration, 2),
+        # Content-seconds per output-second: footage playback speed (1/s when
+        # the window is compressed). Saved on every queue item.
+        "speed": round(raw_duration / out_duration, 3),
         "width": TARGET_W,
         "height": TARGET_H,
         "face_detected": bool(face),

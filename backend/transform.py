@@ -19,6 +19,8 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random
+import re
 from pathlib import Path
 from typing import Any
 
@@ -258,3 +260,206 @@ def synthesize_voiceover(
     ts_path.write_text(json.dumps(words, indent=2), encoding="utf-8")
     common.info(f"Voiceover ready: {out_path.name} ({len(words)} word timestamps)")
     return out_path, words
+
+
+# ---------------------------------------------------------------------------
+# Anti-flag metadata: 3 titles / 3 descriptions / 3 hashtag sets per clip
+# ---------------------------------------------------------------------------
+
+
+def _meta_prompt(content: str) -> str:
+    return (
+        "You write metadata for short-form video clips (TikTok/Reels/Shorts). "
+        "From the content below, return STRICT JSON and nothing else with "
+        "exactly this shape:\n"
+        '{"titles": ["...", "...", "..."], '
+        '"descriptions": ["...", "...", "..."], '
+        '"hashtags": [["#a"], ["#b"], ["#c"]]}\n'
+        "Rules: exactly 3 titles (<=70 chars, no hashtags inside); exactly 3 "
+        "descriptions (1-3 natural sentences, no hashtags inside); exactly 3 "
+        "hashtag arrays of 5-8 tags each, every tag starting with #; all "
+        "variations distinct from one another. JSON only - no markdown fences, "
+        "no commentary.\n\n"
+        f"Content:\n{content[:4000]}"
+    )
+
+
+def _extract_json(text: str) -> dict:
+    """Pull the first JSON object out of an LLM response (fences tolerated)."""
+    t = (text or "").strip()
+    if t.startswith("```"):
+        t = t.split("\n", 1)[1] if "\n" in t else t
+        t = t.rsplit("```", 1)[0]
+    t = t.strip()
+    start, end = t.find("{"), t.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("no JSON object in LLM metadata response")
+    parsed = json.loads(t[start : end + 1])
+    if not isinstance(parsed, dict):
+        raise ValueError("LLM metadata is not a JSON object")
+    return parsed
+
+
+def template_metadata(content: str, rng: Any = None) -> dict:
+    """Deterministic-shape fallback: randomized title/description/hashtag pools.
+
+    No key, no network: three distinct variants come out of shuffled template
+    pools seeded by the clip content, so every clip still gets anti-flag
+    variety.
+    """
+    r = rng or random
+    words = (content or "").strip().split()
+    hook = " ".join(words[:10]).rstrip(",. ;:!?".replace(" ", "")) or (
+        "an incredible true story"
+    )
+
+    title_pool = [
+        hook[:70],
+        f"Wait For What Happens Next - {hook[:45]}".strip(" -"),
+        f"You Won't Believe This: {hook[:50]}".strip(" -"),
+        f"The Part Nobody Talks About ({hook[:40]})",
+        f"Story Time: {hook[:55]}".strip(" -"),
+        f"Nobody Saw This Coming - {hook[:42]}".strip(" -"),
+    ]
+    title_pool = [t for t in title_pool if t and t != "-"]
+    titles = r.sample(title_pool, min(3, len(title_pool)))
+    while len(titles) < 3:
+        titles.append(hook[:70])
+
+    desc_pool = [
+        f"{hook}. Watch till the end and tell us what you think.",
+        f"A moment worth watching twice. {hook}.",
+        f"Sit back and enjoy: {hook}. Follow for more like this.",
+        f"The whole story in under a minute - {hook}.",
+        f"Hit follow if this kept you watching. {hook}.",
+        f"Some stories stay with you. This is one of them: {hook}.",
+    ]
+    descriptions = r.sample(desc_pool, min(3, len(desc_pool)))
+    while len(descriptions) < 3:
+        descriptions.append(f"{hook}. Watch till the end.")
+
+    evergreen = [
+        "#fyp", "#shorts", "#viral", "#trending",
+        "#reels", "#storytime", "#foryou", "#mustwatch",
+    ]
+    topical: list[str] = []
+    for w in words:
+        clean = re.sub(r"[^A-Za-z0-9]", "", w)
+        if len(clean) >= 5:
+            tag = "#" + clean[:14]
+            if tag not in topical:
+                topical.append(tag)
+        if len(topical) >= 8:
+            break
+    pool = evergreen + topical
+    hashtags = [
+        r.sample(pool, min(6, len(pool))) for _ in range(3)
+    ]
+    return {"titles": titles, "descriptions": descriptions, "hashtags": hashtags}
+
+
+def _str_list(value: Any, cap: int) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    out: list[str] = []
+    for item in value:
+        text = str(item).strip() if isinstance(item, (str, int, float)) else ""
+        if text:
+            out.append(text)
+        if len(out) >= cap:
+            break
+    return out
+
+
+def _normalize_metadata(raw: Any, content: str, rng: Any = None) -> dict:
+    """Coerce an LLM payload to exactly 3 titles/descriptions/hashtag sets,
+    padding any gaps from the template generator."""
+    base = template_metadata(content, rng)
+    if not isinstance(raw, dict):
+        return base
+
+    titles = _str_list(raw.get("titles"), 3)
+    descriptions = _str_list(raw.get("descriptions"), 3)
+    hashtags: list[list[str]] = []
+    raw_sets = raw.get("hashtags")
+    if isinstance(raw_sets, list):
+        for entry in raw_sets:
+            tags = _str_list(entry, 8)
+            tags = ["#" + re.sub(r"^#+", "", t) for t in tags]
+            tags = [t for t in tags if t.strip("#")]
+            if tags:
+                hashtags.append(tags)
+            if len(hashtags) >= 3:
+                break
+
+    while len(titles) < 3:
+        titles.append(base["titles"][len(titles) % 3])
+    while len(descriptions) < 3:
+        descriptions.append(base["descriptions"][len(descriptions) % 3])
+    while len(hashtags) < 3:
+        hashtags.append(base["hashtags"][len(hashtags) % 3])
+    return {
+        "titles": titles[:3],
+        "descriptions": descriptions[:3],
+        "hashtags": hashtags[:3],
+    }
+
+
+def _clean_handle(channel: str) -> str:
+    handle = str(channel or "").strip().lstrip("@").strip()
+    return re.sub(r"\s+", " ", handle)
+
+
+def attribution_line(channel: str) -> str:
+    """Return 'Inspired by @Handle' or '' when no channel is known."""
+    handle = _clean_handle(channel)
+    return f"Inspired by @{handle}" if handle else ""
+
+
+def with_attribution(description: str, channel: str) -> str:
+    """Append the copyright attribution to a description (guaranteed for every
+    variant, LLM- or template-generated)."""
+    line = attribution_line(channel)
+    if not line:
+        return description or ""
+    text = (description or "").strip()
+    return f"{text} {line}".strip() if text else line
+
+
+def generate_metadata(
+    content: str,
+    channel: str = "",
+    rng: Any = None,
+) -> tuple[dict, str]:
+    """3 titles, 3 descriptions and 3 hashtag sets for one clip.
+
+    Uses the same free LLM provider as ``rewrite_script``; with no key - or on
+    any provider/parse error - falls back to randomized template variants.
+    ``Inspired by @channel`` is appended to every description here so the
+    attribution can never be lost, whatever the source.
+    """
+    content = (content or "").strip()
+    provider, key = _provider(), _api_key()
+
+    meta: dict | None = None
+    source = "template"
+    if content and provider in ("gemini", "openrouter") and key:
+        try:
+            prompt = _meta_prompt(content)
+            if provider == "gemini":
+                text = _call_gemini(prompt, key)
+            else:
+                text = _call_openrouter(prompt, key)
+            meta = _normalize_metadata(_extract_json(text), content, rng)
+            source = provider
+            common.info(f"Clip metadata generated via {provider}")
+        except Exception as exc:
+            common.warn(f"LLM metadata failed ({exc}) - template variations instead")
+            meta = None
+
+    if meta is None:
+        meta = template_metadata(content, rng)
+        source = "template"
+
+    meta["descriptions"] = [with_attribution(d, channel) for d in meta["descriptions"]]
+    return meta, source
