@@ -97,8 +97,14 @@ export default function LoginForm({
     <div className="flex min-h-screen items-center justify-center bg-ink px-5 py-10">
       <div className="w-full max-w-sm rounded-2xl border border-line bg-surface p-7 shadow-card">
         <div className="flex items-center gap-3">
-          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-brand/15 text-lg font-black text-brand">
-            CF
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-line bg-white">
+            <img
+              src="/assets/logos/icon.svg"
+              alt="Clipper Factory"
+              className="h-full w-full object-cover"
+              width={40}
+              height={40}
+            />
           </span>
           <div>
             <h1 className="text-lg font-bold text-fg">{headerText}</h1>
