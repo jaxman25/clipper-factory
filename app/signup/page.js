@@ -1,18 +1,28 @@
 import LoginForm from '@/components/studio/LoginForm'
+import { publicProviders } from '@/lib/next-auth'
 
 export const metadata = {
   title: 'Sign up',
 }
 
-export default function SignupPage() {
+/** Only allow same-origin callback paths to avoid an open redirect. */
+function safeCallback(value) {
+  const target = String(value || '')
+  if (target.startsWith('/') && !target.startsWith('//')) return target
+  return '/dashboard'
+}
+
+export default function SignupPage({ searchParams }) {
+  const error = String(searchParams?.error || '')
+  const callbackUrl = safeCallback(searchParams?.callbackUrl)
+  const googleConfigured = publicProviders().some((provider) => provider.id === 'google')
+
   return (
     <LoginForm
-      headerText="Create an Account"
-      subHeaderText="Sign in to generate and schedule shorts."
-      submitButtonText="Sign Up"
-      googleButtonText="Sign up with Google"
-      bottomLinkText="Already have an account? Log in"
-      showCreditsText={true}
+      mode="signup"
+      googleConfigured={googleConfigured}
+      callbackUrl={callbackUrl}
+      initialError={error}
     />
   )
 }

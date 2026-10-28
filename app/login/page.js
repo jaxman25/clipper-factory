@@ -19,15 +19,10 @@ export default function LoginPage({ searchParams }) {
 
   return (
     <LoginForm
+      mode="login"
       googleConfigured={googleConfigured}
       callbackUrl={callbackUrl}
       initialError={error}
-      headerText="Welcome Back"
-      subHeaderText="Sign in to generate and schedule shorts."
-      submitButtonText="Sign In"
-      googleButtonText="Continue with Google"
-      bottomLinkText="Don't have an account? Sign up"
-      showCreditsText={false}
     />
   )
 }

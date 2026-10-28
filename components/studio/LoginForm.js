@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { signIn } from 'next-auth/react'
 import { Loader2 } from 'lucide-react'
 
@@ -17,29 +18,61 @@ function describeError(code) {
   return ERROR_TEXT[code] || 'Sign-in failed. Please try again.'
 }
 
+/** Official Google "G" logo, 4-color (blue, green, yellow, red). */
+function GoogleLogo() {
+  return (
+    <svg className="h-5 w-5 shrink-0" viewBox="0 0 48 48" aria-hidden="true">
+      <path
+        fill="#EA4335"
+        d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+      />
+      <path
+        fill="#4285F4"
+        d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+      />
+      <path
+        fill="#FBBC05"
+        d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+      />
+      <path
+        fill="#34A853"
+        d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+      />
+    </svg>
+  )
+}
+
 /**
- * Login form: email/password + optional Google sign-in.
- * Used by both /login and /signup pages with different text labels.
+ * Shared auth form for /login (mode="login") and /signup (mode="signup").
+ * The credentials provider creates the account on first sign-in, so the
+ * signup mode uses the same signIn('credentials') flow as login.
+ * Failures come back as ?error=<code> on the URL, mapped to friendly text.
  */
 export default function LoginForm({
+  mode = 'login',
   googleConfigured = false,
   callbackUrl = '/dashboard',
   initialError = '',
-  // Text labels customized by the caller
-  headerText,
-  subHeaderText,
-  submitButtonText,
-  googleButtonText,
-  bottomLinkText,
-  linkHref,
-  showCreditsText = false,
 }) {
+  const isSignup = mode === 'signup'
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [localError, setLocalError] = useState('')
 
   const error = describeError(initialError) || localError
+
+  const headerText = isSignup ? 'Create an Account' : 'Welcome Back'
+  const subHeaderText = isSignup
+    ? 'Create your account to start generating shorts.'
+    : 'Sign in to generate and schedule shorts.'
+  const submitText = isSignup ? 'Sign Up' : 'Sign In'
+  const googleText = isSignup ? 'Sign up with Google' : 'Continue with Google'
+  const bottomLinkText = isSignup
+    ? 'Already have an account? Log in'
+    : "Don't have an account? Sign up"
+  const bottomLinkHref = isSignup ? '/login' : '/signup'
+  const passwordAutoComplete = isSignup ? 'new-password' : 'current-password'
 
   async function submit(event) {
     event.preventDefault()
@@ -51,6 +84,8 @@ export default function LoginForm({
     setBusy(true)
     setLocalError('')
     try {
+      // redirect:true navigates to callbackUrl on success and reloads this
+      // page with ?error=... on failure.
       await signIn('credentials', { email: email.trim(), password, callbackUrl })
     } catch (err) {
       setLocalError('Could not reach the sign-in service.')
@@ -77,28 +112,19 @@ export default function LoginForm({
           </p>
         ) : null}
 
+        {/* Standard Google sign-in button: white bg, light grey border, dark text. */}
         <button
           type="button"
-          className={busy
-            ? 'btn mt-5 w-full flex items-center justify-center gap-2 disabled:opacity-50'
-            : googleConfigured
-              ? 'btn mt-5 w-full flex items-center justify-center gap-2 bg-white border border-gray-300 text-gray-900 hover:bg-gray-50'
-              : 'btn mt-5 w-full flex items-center justify-center gap-2 bg-white border border-gray-300 text-gray-900 cursor-not-allowed'
-          }
+          onClick={() => googleConfigured && signIn('google', { callbackUrl })}
           disabled={busy || !googleConfigured}
           aria-disabled={busy || !googleConfigured}
-          onClick={() => googleConfigured && signIn('google', { callbackUrl })}
-          title={!googleConfigured && 'Google login not configured yet'}
+          title={googleConfigured ? undefined : 'Google login not configured yet'}
+          className={`btn mt-5 w-full flex items-center justify-center gap-2.5 bg-white border border-gray-300 text-gray-900 hover:bg-gray-50 ${
+            busy || !googleConfigured ? 'cursor-not-allowed opacity-60' : ''
+          }`}
         >
-          <svg
-            className="h-5 w-5"
-            viewBox="0 0 24 24"
-            fill="#ea4335"
-            stroke="#ea4335"
-          >
-            <path d="M12 2c-5.52 0-10 4.48-10 10s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0-2C-6.63 8 2 2 2 8s8.63 4 8.63-4S-4.63 4 2 4zm0 9.59c-3.87 0-7 .98-7 3.5s3.13 3.5 7 3.5 7-.98 7-3.5-3.13-3.5-7-3.5zM12 5.5c2.12 0 3.85.97 4.93 2.28l3.16 1.85c.12.09.18.14.24.22.09.12.13.22.13.35 0 .21-.06.34-.14.44l-1.32 1.75c-.34.45-.98.77-1.65.77-1.1 0-1.66-.6-1.66-1.75l-1.33-1.75c-.08-.1-.15-.23-.18-.41 0-.21 0-.41 0-.5 0-.21 0-.36 0-.5 0l-.31-1.75c-1.48-.86-2.47-2.15-2.47-3.73 0-1.62.65-2.88 1.75-3.73l3.13-1.86c.11-.09.16-.14.23-.18.07-.05.09-.1.09-.15z"/>
-          </svg>
-          <span>{googleConfigured ? googleButtonText : 'Google login not configured'}</span>
+          <GoogleLogo />
+          <span>{googleText}</span>
         </button>
 
         <div className="my-4 flex items-center gap-3">
@@ -125,7 +151,7 @@ export default function LoginForm({
             <input
               className="input"
               type="password"
-              autoComplete="current-password"
+              autoComplete={passwordAutoComplete}
               placeholder="••••••••"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
@@ -134,24 +160,24 @@ export default function LoginForm({
           </label>
           <button type="submit" className="btn btn-primary mt-1 w-full" disabled={busy}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-            {busy ? 'Signing in…' : submitButtonText}
+            {busy ? (isSignup ? 'Creating account…' : 'Signing in…') : submitText}
           </button>
         </form>
 
-        {showCreditsText && (
+        {isSignup ? (
           <p className="mt-4 text-center text-[11px] leading-relaxed text-subtle">
             New accounts start with <b className="text-muted">5 free credits</b>.
           </p>
-        )}
+        ) : null}
 
-        {bottomLinkText && (
-          <a
-            href={linkHref || '/signup'}
-            className="mt-4 text-center text-[11px] uppercase tracking-widest text-brand hover:text-brand/90 transition-colors"
+        <p className="mt-4 text-center">
+          <Link
+            href={bottomLinkHref}
+            className="text-[11px] uppercase tracking-widest text-brand hover:text-brand/90 transition-colors"
           >
             {bottomLinkText}
-          </a>
-        )}
+          </Link>
+        </p>
       </div>
     </div>
   )
