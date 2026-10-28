@@ -1,8 +1,8 @@
-'use client';
+'use client'
 
-import { useState } from 'react';
-import { signIn } from 'next-auth/react';
-import { Loader2 } from 'lucide-react';
+import { useState } from 'react'
+import { signIn } from 'next-auth/react'
+import { Loader2 } from 'lucide-react'
 
 const ERROR_TEXT = {
   CredentialsSignin: 'Wrong email or password.',
@@ -10,49 +10,58 @@ const ERROR_TEXT = {
   OAuthCallback: 'Google sign-in was cancelled or failed. Try again.',
   Configuration: 'Sign-in is not configured yet (check NEXTAUTH_SECRET and Google credentials).',
   AccessDenied: 'This account is not allowed to sign in.',
-};
+}
 
 function describeError(code) {
-  if (!code) return '';
-  return ERROR_TEXT[code] || 'Sign-in failed. Please try again.';
+  if (!code) return ''
+  return ERROR_TEXT[code] || 'Sign-in failed. Please try again.'
 }
 
 /**
  * Login form: Google button (disabled with a tooltip when Google OAuth is
- * not configured) + email/password. The form is both sign-in and sign-up —
- * the first sign-in with an email creates the account.
+ * not configured) + email/password.
+ * pageType='login' shows "Welcome Back" context; pageType='signup' shows
+ * "Create an Account" context. The underlying credentials flow already creates
+ * an account on first sign-in.
  * Failures come back as ?error=<code> on the URL, mapped to friendly text.
  */
 export default function LoginForm({
   googleConfigured = false,
   callbackUrl = '/dashboard',
   initialError = '',
+  pageType = 'login',
 }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [localError, setLocalError] = useState('');
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [localError, setLocalError] = useState('')
 
-  const error = describeError(initialError) || localError;
+  const error = describeError(initialError) || localError
 
   async function submit(event) {
-    event.preventDefault();
-    if (busy) return;
+    event.preventDefault()
+    if (busy) return
     if (!email.trim() || !password) {
-      setLocalError('Enter your email and password.');
-      return;
+      setLocalError('Enter your email and password.')
+      return
     }
-    setBusy(true);
-    setLocalError('');
+    setBusy(true)
+    setLocalError('')
     try {
       // redirect:true navigates to callbackUrl on success and reloads this
       // page with ?error=... on failure.
-      await signIn('credentials', { email: email.trim(), password, callbackUrl });
+      await signIn('credentials', { email: email.trim(), password, callbackUrl })
     } catch (err) {
-      setLocalError('Could not reach the sign-in service.');
-      setBusy(false);
+      setLocalError('Could not reach the sign-in service.')
+      setBusy(false)
     }
   }
+
+  // Determine header text based on page type
+  const headerText = pageType === 'signup' ? 'Create an Account' : 'Welcome Back'
+  const subHeaderText = pageType === 'signup'
+    ? 'Sign in to generate and schedule shorts.'
+    : 'Sign in to generate and schedule shorts.'
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-ink px-5 py-10">
@@ -62,8 +71,8 @@ export default function LoginForm({
             CF
           </span>
           <div>
-            <h1 className="text-lg font-bold text-fg">Clipper Factory</h1>
-            <p className="text-xs text-muted">Sign in to generate and schedule shorts.</p>
+            <h1 className="text-lg font-bold text-fg">{headerText}</h1>
+            <p className="text-xs text-muted">{subHeaderText}</p>
           </div>
         </div>
 
@@ -90,10 +99,7 @@ export default function LoginForm({
           <span className="h-px flex-1 bg-line" />
         </div>
 
-        <p className="text-xs leading-relaxed text-muted">
-          Don't have an account? Just enter your email and a password, and we will create one for
-          you.
-        </p>
+        
 
         <form onSubmit={submit} className="flex flex-col gap-3">
           <label className="flex flex-col gap-1.5">
@@ -126,10 +132,16 @@ export default function LoginForm({
           </button>
         </form>
 
+        {pageType === 'signup' && (
+          <p className="text-xs leading-relaxed text-muted">
+            Don't have an account? Just enter your email and a password, and we will create one for you.
+          </p>
+        )}
+
         <p className="mt-4 text-center text-[11px] leading-relaxed text-subtle">
           New accounts start with <b className="text-muted">5 free credits</b>.
         </p>
       </div>
     </div>
-  );
+  )
 }
