@@ -3,7 +3,6 @@
 import { useState } from 'react'
 import { signIn } from 'next-auth/react'
 import { Loader2 } from 'lucide-react'
-import { Link } from 'next/link'
 
 const ERROR_TEXT = {
   CredentialsSignin: 'Wrong email or password.',
@@ -145,13 +144,13 @@ export default function LoginForm({
           </p>
         )}
 
-        {bottomLinkText && linkHref && (
-          <Link
-            href={linkHref}
+        {bottomLinkText && (
+          <a
+            href={linkHref || '/signup'}
             className="mt-4 text-center text-[11px] uppercase tracking-widest text-brand hover:text-brand/90 transition-colors"
           >
             {bottomLinkText}
-          </Link>
+          </a>
         )}
       </div>
     </div>
