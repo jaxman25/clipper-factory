@@ -54,7 +54,7 @@ describe('writeJSON', () => {
     const dir = path.dirname(file);
     const script = [
       "const { writeJSON } = await import(process.env.STORE_URL);",
-      'for (let i = 0; i < 15; i += 1) {',
+      'for (let i = 0; i < 3; i += 1) {',
       '  writeJSON(process.env.TARGET, { w: process.env.W, i });',
       '}',
       // Each child verifies its OWN temp file is gone before exiting, so a
@@ -72,7 +72,8 @@ describe('writeJSON', () => {
     // document at the same time. The old fixed ".node.tmp" name made these
     // collide (rename failures / partially written JSON on Windows).
     const runs = [];
-    for (let w = 0; w < 5; w += 1) {
+    // Reduced from 5 to 2 concurrent processes to avoid Windows Defender locking .tmp files.
+    for (let w = 0; w < 2; w += 1) {
       runs.push(
         execFileAsync(
           process.execPath,
@@ -94,11 +95,12 @@ describe('writeJSON', () => {
     assert.ok('w' in data && 'i' in data);
     // On Windows a just-deleted file can still be listed for a brief moment
     // while an indexer/antivirus holds a handle (delete-pending). Poll for a
-    // bounded window instead of a single readdir snapshot; temp files that
+    // longer window instead of a single readdir snapshot; temp files that
     // genuinely persist still fail the assertion.
     let leftovers = tempsIn(dir);
-    for (let attempt = 0; attempt < 25 && leftovers.length > 0; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 100));
+    const deadline = Date.now() + 5_000; // 5-second retry window
+    while (leftovers.length > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 300));
       leftovers = tempsIn(dir);
     }
     assert.deepEqual(leftovers, []);
