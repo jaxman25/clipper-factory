@@ -6,19 +6,13 @@ export const metadata = {
 
 export default function SignupPage() {
   return (
-    <>
-      <LoginForm
-        pageType="signup"
-      />
-      {/* Already have an account? Log in here */}
-      <div className="mt-8 text-center">
-        <a
-          href="/login"
-          className="text-[11px] uppercase tracking-widest text-brand hover:text-brand/90 transition-colors"
-        >
-          Already have an account? Log in here
-        </a>
-      </div>
-    </>
+    <LoginForm
+      headerText="Create an Account"
+      subHeaderText="Sign in to generate and schedule shorts."
+      submitButtonText="Sign Up"
+      googleButtonText="Sign up with Google"
+      bottomLinkText="Already have an account? Log in"
+      showCreditsText={true}
+    />
   )
 }

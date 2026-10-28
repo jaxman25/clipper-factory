@@ -18,22 +18,16 @@ export default function LoginPage({ searchParams }) {
   const googleConfigured = publicProviders().some((provider) => provider.id === 'google')
 
   return (
-    <>
-      <LoginForm
-        googleConfigured={googleConfigured}
-        callbackUrl={callbackUrl}
-        initialError={error}
-        pageType="login"
-      />
-      {/* Signup link at bottom for users without an account */}
-      <div className="mt-8 text-center">
-        <a
-          href="/signup"
-          className="text-[11px] uppercase tracking-widest text-brand hover:text-brand/90 transition-colors"
-        >
-          Don't have an account? Sign up here
-        </a>
-      </div>
-    </>
+    <LoginForm
+      googleConfigured={googleConfigured}
+      callbackUrl={callbackUrl}
+      initialError={error}
+      headerText="Welcome Back"
+      subHeaderText="Sign in to generate and schedule shorts."
+      submitButtonText="Sign In"
+      googleButtonText="Continue with Google"
+      bottomLinkText="Don't have an account? Sign up"
+      showCreditsText={false}
+    />
   )
 }
