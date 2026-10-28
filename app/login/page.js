@@ -27,6 +27,7 @@ export default function LoginPage({ searchParams }) {
       submitButtonText="Sign In"
       googleButtonText="Continue with Google"
       bottomLinkText="Don't have an account? Sign up"
+      linkHref="/signup"
       showCreditsText={false}
     />
   )

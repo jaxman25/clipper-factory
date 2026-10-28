@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { signIn } from 'next-auth/react'
 import { Loader2 } from 'lucide-react'
+import { Link } from 'next/link'
 
 const ERROR_TEXT = {
   CredentialsSignin: 'Wrong email or password.',
@@ -31,6 +32,7 @@ export default function LoginForm({
   submitButtonText,
   googleButtonText,
   bottomLinkText,
+  linkHref,
   showCreditsText = false,
 }) {
   const [email, setEmail] = useState('')
@@ -92,10 +94,10 @@ export default function LoginForm({
           <svg
             className="h-5 w-5"
             viewBox="0 0 24 24"
-            fill="currentColor"
-            stroke="currentColor"
+            fill="#ea4335"
+            stroke="#ea4335"
           >
-            <path d="M21.43 13.07a7.96 7.96 0 0 1-1.83-.05l-2.16 2.16a5.99 5.99 0 0 1-1.41-1.41l2.23-2.23a1.73 1.73 0 0 1 0 2.45l-2.26 2.26a11.95 11.95 0 0 1-1.66 1.25l-.58-.03a5.96 5.96 0 0 1-.27-1.27l-.26-.65a7.94 7.94 0 0 1-1.06-1.06l-.63 2.36a9.92 9.92 0 0 1-1.41-.83l-.78-.36a7.99 7.99 0 0 1-1.01-1.15l-.66-2.05a12.02 12.02 0 0 1-.55-1.95l-.28-.32a7.93 7.93 0 0 1-1.1-.62l-.63-2.36a9.88 9.88 0 0 1-.71-1.36l-.37-.85a7.96 7.96 0 0 1-.52-1.38l-.28-.82a5.98 5.98 0 0 1-.28-1.26l1.05-2.02a7.99 7.99 0 0 1 .82-1.13l.34-1.88a5.96 5.96 0 0 1 .63-.58l2.23 2.16a5.99 5.99 0 0 1 1.41 1.41l-2.16-2.16a7.96 7.96 0 0 1-1.05.05l-2.35 2.38a5.95 5.95 0 0 1-1.23 1.21l-.57.04a5.95 5.95 0 0 1-.32.27l-.23.66a7.97 7.97 0 0 1-1.15 1.01l-.37.78a9.91 9.91 0 0 1-.83 1.41l-.36.78a7.99 7.99 0 0 1-1.01 1.15l.79 2.06a12.02 12.02 0 0 1 .07 1.57l.33.33a7.96 7.96 0 0 1 .66 1.13l.76 2.33a9.89 9.89 0 0 1 1.35.77l.36.1a7.99 7.99 0 0 1 1.16.58l2.24-2.16a5.95 5.95 0 0 1 1.24-.82l.33-.39a7.99 7.99 0 0 1 1.12-.3l.31-1.75a5.99 5.99 0 0 1 .58-.31l2.23-2.16ZM12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16Z"/>
+            <path d="M12 2c-5.52 0-10 4.48-10 10s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0-2C-6.63 8 2 2 2 8s8.63 4 8.63-4S-4.63 4 2 4zm0 9.59c-3.87 0-7 .98-7 3.5s3.13 3.5 7 3.5 7-.98 7-3.5-3.13-3.5-7-3.5zM12 5.5c2.12 0 3.85.97 4.93 2.28l3.16 1.85c.12.09.18.14.24.22.09.12.13.22.13.35 0 .21-.06.34-.14.44l-1.32 1.75c-.34.45-.98.77-1.65.77-1.1 0-1.66-.6-1.66-1.75l-1.33-1.75c-.08-.1-.15-.23-.18-.41 0-.21 0-.41 0-.5 0-.21 0-.36 0-.5 0l-.31-1.75c-1.48-.86-2.47-2.15-2.47-3.73 0-1.62.65-2.88 1.75-3.73l3.13-1.86c.11-.09.16-.14.23-.18.07-.05.09-.1.09-.15z"/>
           </svg>
           <span>{googleConfigured ? googleButtonText : 'Google login not configured'}</span>
         </button>
@@ -143,10 +145,13 @@ export default function LoginForm({
           </p>
         )}
 
-        {bottomLinkText && (
-          <p className="mt-4 text-center text-[11px] leading-relaxed text-subtle">
+        {bottomLinkText && linkHref && (
+          <Link
+            href={linkHref}
+            className="mt-4 text-center text-[11px] uppercase tracking-widest text-brand hover:text-brand/90 transition-colors"
+          >
             {bottomLinkText}
-          </p>
+          </Link>
         )}
       </div>
     </div>

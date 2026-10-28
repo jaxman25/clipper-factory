@@ -12,6 +12,7 @@ export default function SignupPage() {
       submitButtonText="Sign Up"
       googleButtonText="Sign up with Google"
       bottomLinkText="Already have an account? Log in"
+      linkHref="/login"
       showCreditsText={true}
     />
   )
