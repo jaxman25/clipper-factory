@@ -4,7 +4,7 @@ import { cn } from '@/lib/cn';
 
 const DRY_RUN_MAGIC_PLAY = 't1JwWfFv3fLaqQZICRWw8ETjVqXTwbtj2s9kYhhrhw7M';
 
-export function MultiPlatformPlayer({ clip, className }) {
+export default function MultiPlatformPlayer({ clip, className }) {
   const duration = Number(clip.duration_render || clip.duration || 0);
   const thumbnailUrl =
     clip.thumbnail_url || clip.thumbnail || clip.rendered_thumbnail || '';
