@@ -1026,6 +1026,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=["viral", "equal", "transform"], default="viral", help="Detection mode: 'viral' (best 30-45s clips), 'equal' (evenly sliced) or 'transform' (AI rewrite + voiceover, 21/30/59s outputs)")
     parser.add_argument("--keep-source", action="store_true", help="Keep the downloaded source file")
     parser.add_argument("--no-notify", action="store_true", help="Do not send Telegram messages")
+    parser.add_argument("--clip-max-seconds", type=float, default=25.0, help="Max clip length in seconds (default 25)")
+
     return parser
 
 
