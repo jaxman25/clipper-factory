@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 
-const USERS_FILE = () => path.join(tmpRoot, 'state', 'users.json');
+const USERS_FILE = () => path.join(tmpRoot, 'users.json');
 
 let tmpRoot;
 let credits;
@@ -21,10 +21,13 @@ let credits;
 before(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'acf-credits-'));
   process.env.ACF_DATA_ROOT = tmpRoot;
+  // Keep the (project-relative) default store out of the real data/ dir.
+  process.env.ACF_USERS_FILE = USERS_FILE();
 });
 
 after(() => {
   delete process.env.ADMIN_EMAIL;
+  delete process.env.ACF_USERS_FILE;
   fs.rmSync(tmpRoot, { recursive: true, force: true });
 });
 

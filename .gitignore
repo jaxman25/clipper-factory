@@ -30,6 +30,9 @@ assets/broll/
 auth.json
 *.log
 
+# Local user/credit store (never commit balances or password hashes)
+data/
+
 # Python
 __pycache__/
 *.py[cod]

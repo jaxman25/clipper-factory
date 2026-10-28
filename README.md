@@ -87,6 +87,11 @@ Generated media lives under `ACF_DATA_ROOT` (`/tmp` on Render):
 | `WHISPER_MODEL` | optional | `tiny` (default), `base`, … |
 | `ACF_ENABLE_SCHEDULER` | optional | `1` posts at 19:00/21:00 inside the bot process |
 | `DASHBOARD_USER`, `DASHBOARD_PASSWORD` | optional | HTTP Basic protection for the dashboard |
+| `ADMIN_EMAIL` | recommended | Signed-in email that bypasses credits (the owner's address) |
+| `NEXTAUTH_SECRET` | yes for login | Session/JWT signing key: `openssl rand -base64 32` |
+| `NEXTAUTH_URL` | yes for login | Public origin: `http://localhost:3000` locally, `https://<service>.onrender.com` on Render |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | optional | "Sign in with Google" (Web application OAuth client) |
+| `ACF_USERS_FILE` | optional | User/credit store path; defaults to `data/users.json`, set a persistent-disk path on Render |
 | `YOUTUBE_CLIENT_ID` | optional | OAuth2 Client ID (Google Cloud Console → YouTube Data API v3) |
 | `YOUTUBE_CLIENT_SECRET` | optional | OAuth2 Client Secret |
 | `YOUTUBE_REFRESH_TOKEN` | optional | Offline refresh token from the consent flow |
@@ -317,6 +322,65 @@ When all three turn green, `backend/youtube_uploader.py` can upload the first cl
 
 If you would rather not use a browser, create a service account in the Google Cloud Console
 (**IAM & Admin → Service Accounts → Create Service Account**), download the JSON key under **Keys**, and paste the whole JSON into the dashboard's `YOUTUBE_SERVICE_ACCOUNT` field. Grant it the `youtube.upload` role. Service accounts cannot use the browser consent flow, so the refresh token is not needed.
+
+---
+
+## 8. Dashboard login (next-auth) and credits
+
+The dashboard signs users in with next-auth. How the pieces fit:
+
+- **`/login`** — email + password (plus a **Continue with Google** button when
+  `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` are set). The first sign-in creates the account with
+  **5 free credits**; there is no separate sign-up form.
+- **`/dashboard`** requires a session on public hosts and redirects anonymous visitors to `/login`.
+  On **localhost the login is bypassed entirely**, so you never sign in while testing.
+- **`ADMIN_EMAIL`** — the signed-in account matching this email is admin: a golden
+  *Admin (Unlimited Credits)* badge and no credit check, ever. You cannot lock yourself out.
+- **`/api/generate`** charges public users 1 credit per *accepted* job (validation failures and
+  failed spawns are free). At 0 credits it returns `403` with a "buy more" message.
+- Optional HTTP Basic (`DASHBOARD_USER`/`DASHBOARD_PASSWORD`) still works as an outer layer;
+  `/api/auth` is exempt from the middleware so Google's OAuth redirect back to the app is never
+  blocked by a 401.
+
+### Local setup (email/password only)
+
+```bash
+# .env
+NEXTAUTH_SECRET=$(openssl rand -base64 32)   # sign session cookies
+NEXTAUTH_URL=http://localhost:3000
+ADMIN_EMAIL=you@gmail.com                     # your admin address
+```
+
+Restart, open `http://localhost:3000/login`, and sign in with any email + password — the account is
+created on the first attempt and starts with 5 credits.
+
+### Google sign-in (local and Render)
+
+1. Open the [Google Cloud Console](https://console.cloud.google.com/) (any project works — you can
+   reuse the one from the YouTube uploader, section 7).
+2. **APIs & Services → OAuth consent screen** → *External* → fill in the app name and emails →
+   Save. While the app is in **Testing** mode, add your email under **Test users**.
+3. **APIs & Services → Credentials → Create credentials → OAuth client ID** → application type
+   **Web application**.
+4. Add the authorized redirect URIs:
+
+   ```
+   http://localhost:3000/api/auth/callback/google                       # local
+   https://<your-service>.onrender.com/api/auth/callback/google        # Render
+   ```
+
+5. Copy the **Client ID** and **Client secret**:
+   - locally → `.env` as `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`, then restart;
+   - on Render → **Environment** tab → add both as secrets → redeploy.
+6. The **Continue with Google** button appears on `/login` automatically. Before public launch,
+   click **Publish app** on the consent screen so any Google account (not just test users) can
+   sign in.
+
+### Keeping users and credits across deploys
+
+The store lives in `data/users.json` (gitignored), which survives restarts but not a Render
+deploy. Attach a **persistent disk** to the service and set `ACF_USERS_FILE=/data/users.json` to
+keep accounts and balances across deploys.
 
 ---
 
