@@ -11,6 +11,7 @@ import {
   Video,
 } from 'lucide-react';
 
+import LandingAuthAction from '@/components/studio/LandingAuthAction';
 import ThemeToggle from '@/components/studio/ThemeToggle';
 
 const FEATURES = [
@@ -153,6 +154,8 @@ export default function LandingPage() {
 
           <div className="flex items-center gap-2.5">
             <ThemeToggle />
+            {/* Sign in -> /login, or the profile chip -> /dashboard once signed in. */}
+            <LandingAuthAction />
             <Link href="/dashboard" className="btn btn-primary btn-sm">
               Open dashboard
               <ArrowRight className="h-3.5 w-3.5" />
