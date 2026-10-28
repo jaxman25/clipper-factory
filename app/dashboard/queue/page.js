@@ -8,9 +8,10 @@ import ClipCard from '@/components/studio/ClipCard';
 import { EmptyState, PageHeader, SectionCard, Skeleton } from '@/components/studio/ui';
 import { useStudio } from '@/components/studio/StudioProvider';
 import { cn } from '@/lib/cn';
+import AnalyticsSummary from '@/components/studio/AnalyticsSummary';
 
 export default function QueuePage() {
-  const { clips, posted, loading, refresh, notify } = useStudio();
+  const { clips, posted, loading, refresh, notify, analytics } = useStudio();
   const [tab, setTab] = useState('queue');
   const [resetOpen, setResetOpen] = useState(false);
   const [resetting, setResetting] = useState(false);
@@ -55,6 +56,12 @@ export default function QueuePage() {
       <SectionCard title="Posting calendar" description="Drag a clip onto another cell to move its slot">
         <ScheduleBoard />
       </SectionCard>
+
+      {analytics && analytics.points && analytics.points.length > 0 && (
+        <SectionCard title="Analytics & earnings" description="Total views over time, estimated at $0.50 per 1,000 views.">
+          <AnalyticsSummary analytics={analytics} />
+        </SectionCard>
+      )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex rounded-full border border-line bg-surface p-1">

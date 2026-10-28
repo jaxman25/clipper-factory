@@ -1,10 +1,12 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { CalendarClock, Download, Loader2, Pencil, Save, Send, Sparkles, X } from 'lucide-react';
+import { CalendarClock, Download, Loader2, Pencil, Save, Send, Sparkles, X, DollarSign, TrendingUp, Eye } from 'lucide-react';
 import { useStudio } from '@/components/studio/StudioProvider';
 import { dayKeyInTZ, formatInTZ, timeInTZ, zonedToIso } from '@/lib/time';
 import { cn } from '@/lib/cn';
+import MultiPlatformPlayer from '@/components/studio/MultiPlatformPlayer';
+import MetadataEditor from '@/components/studio/MetadataEditor';
 
 export default function ClipCard({ clip }) {
   const { timeZone, refresh, notify } = useStudio();
@@ -15,6 +17,17 @@ export default function ClipCard({ clip }) {
   const [note, setNote] = useState(null);
   const [busy, setBusy] = useState('');
 
+  // Which AI metadata set the user picked (title/description/hashtags).
+  const [selectedMeta, setSelectedMeta] = useState(() => {
+    if (clip.metadata_selected_set_index != null && Number.isFinite(Number(clip.metadata_selected_set_index))) {
+      return { setIndex: Number(clip.metadata_selected_set_index) };
+    }
+    if (Array.isArray(clip.metadata_variants?.titles) && clip.metadata_variants.titles.length) {
+      return { setIndex: 0 };
+    }
+    return null;
+  });
+
   // Edit modal: opened from the "Edit clip" button below; the modal owns its
   // form state and re-renders the clip through /api/clips/edit.
   const [isEditing, setIsEditing] = useState(false);
@@ -23,7 +36,14 @@ export default function ClipCard({ clip }) {
     setCaption(clip.caption || '');
     setDate(dayKeyInTZ(clip.scheduled_for, timeZone));
     setTime(timeInTZ(clip.scheduled_for, timeZone));
-  }, [clip.id, clip.caption, clip.scheduled_for, timeZone]);
+    if (Array.isArray(clip.metadata_variants?.titles) && clip.metadata_variants.titles.length) {
+      if (selectedMeta == null || selectedMeta.setIndex >= clip.metadata_variants.titles.length) {
+        setSelectedMeta({ setIndex: 0 });
+      }
+    } else {
+      setSelectedMeta(null);
+    }
+  }, [clip.id, clip.caption, clip.scheduled_for, clip.metadata_variants, timeZone]);
 
   async function saveCaption() {
     setBusy('caption');
@@ -37,6 +57,30 @@ export default function ClipCard({ clip }) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Could not save caption');
       setNote({ kind: 'ok', text: 'Caption saved' });
+      refresh();
+    } catch (err) {
+      setNote({ kind: 'error', text: err.message });
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function saveMetadataSelection() {
+    if (!selectedMeta) return;
+    setBusy('metadata');
+    setNote(null);
+    try {
+      const response = await fetch('/api/clips', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: clip.id,
+          metadata_selected_set_index: selectedMeta.setIndex,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Could not save metadata selection');
+      setNote({ kind: 'ok', text: 'Metadata set saved' });
       refresh();
     } catch (err) {
       setNote({ kind: 'error', text: err.message });
@@ -67,6 +111,17 @@ export default function ClipCard({ clip }) {
       setNote({ kind: 'error', text: err.message });
     } finally {
       setBusy('');
+    }
+  }
+
+  function applySelectedMetadata(selected) {
+    setSelectedMeta(selected);
+    if (selected) {
+      const title = selected.title || '';
+      const description = selected.description || '';
+      const hashtags = selected.hashtags || '';
+      const caption = [title, description, hashtags].filter(Boolean).join(' ').trim();
+      setCaption(caption);
     }
   }
 
@@ -117,18 +172,40 @@ export default function ClipCard({ clip }) {
     .filter(([, value]) => value?.ok)
     .map(([key]) => key);
 
+  const isTransform = clip.mode === 'transform' && Array.isArray(clip.variants);
+
+  function transformedBadge() {
+    const speed = Number(clip.speed);
+    if (
+      Number.isFinite(speed) &&
+      speed >= 1.1 &&
+      speed <= 1.2 &&
+      Array.isArray(clip.metadata_variants) !== false &&
+      clip.metadata_variants != null
+    ) {
+      return (
+        <span className="inline-flex items-center gap-1 rounded-full bg-ok/15 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-ok backdrop-blur">
+          <TrendingUp className="h-3 w-3" />
+          Transformed: Safe to Post
+        </span>
+      );
+    }
+    return (
+      <span className="inline-flex items-center justify-center rounded-full bg-wash-strong px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-subtle backdrop-blur">
+        Standard
+      </span>
+    );
+  }
+
+  const earningsPerThousand = 0.5;
+  const totalViews = Number(clip._analytics?.total_views ?? 0);
+  const estimatedEarnings = totalViews > 0 ? (totalViews / 1000) * earningsPerThousand : 0;
+
   return (
     <>
     <article className="card flex flex-col overflow-hidden">
       <div className="relative bg-black">
-        <video
-          src={clip.media_url}
-          poster={clip.thumb_url}
-          controls
-          playsInline
-          preload="metadata"
-          className="aspect-[9/16] max-h-[360px] w-full object-contain"
-        />
+        <MultiPlatformPlayer clip={clip} />
         <span
           className={cn(
             'absolute left-3 top-3 rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide backdrop-blur',
@@ -137,9 +214,14 @@ export default function ClipCard({ clip }) {
         >
           {clip.manual_required ? 'Needs manual' : posted ? 'Posted' : 'Queued'}
         </span>
-        <span className="absolute right-3 top-3 rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-bold text-[#FFD700] backdrop-blur">
-          🔥 {Math.round(clip.viral_score || 0)}
-        </span>
+        <div className="absolute right-3 top-3 flex gap-2">
+          {transformedBadge()}
+          {!isTransform && (
+            <span className="rounded-full bg-black/60 px-2.5 py-1 text-[10px] font-bold text-[#FFD700] backdrop-blur">
+              🔥 {Math.round(clip.viral_score || 0)}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="flex flex-1 flex-col gap-3 p-4">
@@ -158,8 +240,20 @@ export default function ClipCard({ clip }) {
               {formatInTZ(clip.scheduled_for, timeZone)}
             </span>
             {posted && platforms.length > 0 && <span className="pill">{platforms.join(' + ')}</span>}
+            {isTransform && (
+              <span className="pill">
+                <TrendingUp className="h-3 w-3 text-brand" />
+                Transformed
+              </span>
+            )}
           </div>
         </div>
+
+        {isTransform && clip.metadata_variants && (
+          <div>
+            <MetadataEditor clip={clip} selected={selectedMeta} onSelect={applySelectedMetadata} />
+          </div>
+        )}
 
         <div>
           <label htmlFor={`caption-${clip.id}`} className="label">
@@ -211,34 +305,38 @@ export default function ClipCard({ clip }) {
               {busy === 'schedule' ? 'Saving…' : 'Reschedule'}
             </button>
           </div>
-        )}
-
-        <div className="mt-auto flex flex-wrap gap-2 pt-1">
-          {!posted && (
-            <>
-              <button type="button" onClick={() => setIsEditing(true)} className="btn btn-sm">
-                <Pencil className="h-3.5 w-3.5" />
-                Edit clip
-              </button>
-              <button type="button" onClick={saveCaption} disabled={busy === 'caption'} className="btn btn-sm">
-                <Save className="h-3.5 w-3.5" />
-                {busy === 'caption' ? 'Saving…' : 'Save'}
-              </button>
-              <button type="button" onClick={postNow} disabled={busy === 'post'} className="btn btn-primary btn-sm">
-                <Send className="h-3.5 w-3.5" />
-                {busy === 'post' ? 'Posting…' : 'Post now'}
-              </button>
-            </>
-          )}
-          <button type="button" onClick={sendTelegram} disabled={busy === 'telegram'} className="btn btn-sm">
-            <Send className="h-3.5 w-3.5 text-brand" />
-            {busy === 'telegram' ? 'Sending…' : 'Telegram'}
-          </button>
-          <a href={clip.download_url} className="btn btn-ghost btn-sm">
-            <Download className="h-3.5 w-3.5" />
-            Download
-          </a>
-        </div>
+        )}          <div className="mt-auto flex flex-wrap gap-2 pt-1">
+            {!posted && (
+              <>
+                <button type="button" onClick={() => setIsEditing(true)} className="btn btn-sm">
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit clip
+                </button>
+                <button type="button" onClick={saveCaption} disabled={busy === 'caption'} className="btn btn-sm">
+                  <Save className="h-3.5 w-3.5" />
+                  {busy === 'caption' ? 'Saving…' : 'Save'}
+                </button>
+                {isTransform && selectedMeta && (
+                  <button type="button" onClick={saveMetadataSelection} disabled={busy === 'metadata'} className="btn btn-sm">
+                    <Save className="h-3.5 w-3.5" />
+                    {busy === 'metadata' ? 'Saving…' : 'Save metadata set'}
+                  </button>
+                )}
+                <button type="button" onClick={postNow} disabled={busy === 'post'} className="btn btn-primary btn-sm">
+                  <Send className="h-3.5 w-3.5" />
+                  {busy === 'post' ? 'Posting…' : 'Post now'}
+                </button>
+              </>
+            )}
+            <button type="button" onClick={sendTelegram} disabled={busy === 'telegram'} className="btn btn-sm">
+              <Send className="h-3.5 w-3.5 text-brand" />
+              {busy === 'telegram' ? 'Sending…' : 'Telegram'}
+            </button>
+            <a href={clip.download_url} className="btn btn-ghost btn-sm">
+              <Download className="h-3.5 w-3.5" />
+              Download
+            </a>
+          </div>
 
         {note && (
           <p className={cn('text-[11px]', note.kind === 'error' ? 'text-danger' : 'text-ok')}>
@@ -247,6 +345,19 @@ export default function ClipCard({ clip }) {
         )}
         {!note && posted && clip.posted_at && (
           <p className="text-[11px] text-subtle">Posted {formatInTZ(clip.posted_at, timeZone)}</p>
+        )}
+        {isTransform && Array.isArray(clip.variants) && (
+          <div className="mt-3 flex items-center gap-3 rounded-lg border border-line/60 bg-wash/40 p-3">
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
+              <DollarSign className="h-3.5 w-3.5" />
+              Est. earnings
+            </div>
+            <div className="tabular-nums text-sm font-semibold">
+              ${estimatedEarnings.toFixed(2)}
+            </div>              <p className="text-[11px] text-subtle">
+              {(totalViews / 1000).toFixed(1)}k views · ${estimatedEarnings.toFixed(2)}/thousand
+            </p>
+          </div>
         )}
       </div>
     </article>

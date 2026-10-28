@@ -20,6 +20,7 @@ export function StudioProvider({ children }) {
   const [data, setData] = useState(EMPTY);
   const [health, setHealth] = useState(null);
   const [settings, setSettings] = useState(null);
+  const [analytics, setAnalytics] = useState(null);
   const [job, setJob] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [mode, setMode] = useState('viral');
@@ -35,14 +36,16 @@ export function StudioProvider({ children }) {
 
   const refresh = useCallback(async () => {
     try {
-      const [clipsRes, healthRes, settingsRes] = await Promise.all([
+      const [clipsRes, healthRes, settingsRes, analyticsRes] = await Promise.all([
         fetch('/api/clips', { cache: 'no-store' }),
         fetch('/api/health', { cache: 'no-store' }),
         fetch('/api/settings', { cache: 'no-store' }),
+        fetch('/api/analytics', { cache: 'no-store' }),
       ]);
       if (clipsRes.ok) setData(await clipsRes.json());
       if (healthRes.ok) setHealth(await healthRes.json());
       if (settingsRes.ok) setSettings(await settingsRes.json());
+      if (analyticsRes.ok) setAnalytics(await analyticsRes.json());
     } catch (err) {
       notify(`Could not load state: ${err.message}`);
     } finally {
@@ -194,50 +197,48 @@ export function StudioProvider({ children }) {
     : 0;
 
   const value = useMemo(
-    () => ({
-      data,
-      clips,
-      posted,
-      config: data.config || EMPTY.config,
-      timeZone: data.config?.timezone || 'Africa/Nairobi',
-      postingTimes: data.config?.posting_times?.length ? data.config.posting_times : ['19:00', '21:00'],
-      avgScore,
-      health,
-      // Redacted integration status ({configured, hint} per key) so the
-      // overview can show what is wired up without a second fetch.
-      tokens: settings?.tokens || {},
-      runtime: settings?.runtime || null,
-      loading,
-      job,
-      jobs,
-      setJob,
-      refresh,
-      refreshJobs,
-      applyConfig,
-      startGeneration,
-      reschedule,
-      notify,
-      mode,
-      setMode,
-    }),
-    [
-      data,
-      clips,
-      posted,
-      avgScore,
-      health,
-      settings,
-      loading,
-      job,
-      jobs,
-      refresh,
-      refreshJobs,
-      applyConfig,
-      startGeneration,
-      reschedule,
-      notify,
-      mode,
-    ]
+    () => {
+      const raw = (settings || {}).analytics;
+      const points = Array.isArray(raw?.points) ? raw.points : [];
+      let views = 0;
+      for (const p of points) {
+        const v = Number(p.views);
+        if (Number.isFinite(v)) views += v;
+      }
+      const analytics = {
+        points: points.map((p) => ({ date: p.date || '', label: p.label || '', views: Number(p.views) || 0 })),
+        total_views: views,
+        estimated_earnings: views / 1000 * 0.5,
+      };
+      return {
+        data,
+        clips,
+        posted,
+        config: data.config || EMPTY.config,
+        timeZone: data.config?.timezone || 'Africa/Nairobi',
+        postingTimes: data.config?.posting_times?.length ? data.config.posting_times : ['19:00', '21:00'],
+        avgScore,
+        health,
+        // Redacted integration status ({configured, hint} per key) so the
+        // overview can show what is wired up without a second fetch.
+        tokens: settings?.tokens || {},
+        runtime: settings?.runtime || null,
+        analytics,
+        loading,
+        job,
+        jobs,
+        setJob,
+        refresh,
+        refreshJobs,
+        applyConfig,
+        startGeneration,
+        reschedule,
+        notify,
+        mode,
+        setMode,
+      };
+    },
+    [data, clips, posted, avgScore, health, settings, loading, job, jobs, refresh, refreshJobs, applyConfig, startGeneration, reschedule, notify, mode]
   );
 
   return (
