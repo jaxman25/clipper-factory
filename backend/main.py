@@ -319,8 +319,15 @@ def transcribe(audio: Path, job: Job) -> tuple[list[dict], str, float]:
         segment_iter, info = model.transcribe(
             str(audio),
             word_timestamps=True,
-            vad_filter=True,
+            # Chunked decoding: the audio is processed in 30-second segments
+            # instead of one giant (1, samples, n_mels) array, which is what
+            # blew past the memory limit (~950 MiB) on long sources.
+            chunk_length=30,
+            # Greedy decoding keeps only one hypothesis alive (no beam search
+            # scratch space) - much lighter on a 512 MB box.
             beam_size=1,
+            # Skip silent sections up front so they never reach the decoder.
+            vad_filter=True,
             condition_on_previous_text=False,
         )
     except Exception as exc:
