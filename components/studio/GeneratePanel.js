@@ -136,7 +136,6 @@ export default function GeneratePanel({ autoFocus = false }) {
       }
       notify(`Job ${job.id} cancelled`);
       setJob(null);
-      refresh();
     } catch (err) {
       notify(err.message);
     } finally {
@@ -201,9 +200,9 @@ export default function GeneratePanel({ autoFocus = false }) {
 
         {job && <Progress job={job} onClear={() => setJob(null)} onCancel={cancelJob} onCanceling={canceling} />}
 
-        <div className="mt-4 flex items-center justify-between gap-4 rounded-lg bg-wash p-3">
+        <div className="mt-4 flex flex-col gap-3 rounded-lg bg-wash p-3">
           <span className="text-xs text-muted">Clip mode</span>
-          <div className="flex gap-2">
+          <div className="flex flex-col gap-2">
             <button
               type="button"
               onClick={() => setMode('viral')}

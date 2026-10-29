@@ -494,6 +494,17 @@ def _render_transform(
     queue_items: list[dict] = []
     slots = scheduling.next_slots(cfg, len(TRANSFORM_FORMATS))
     total = len(TRANSFORM_FORMATS)
+    # Every sibling render carries the full 21/30/59 s manifest so the
+    # dashboard can offer all three versions as tabs on one clip card.
+    variants = [
+        {
+            "id": f"{job_id}-{i + 1:02d}-{tag}",
+            "platform": tag,
+            "label": label,
+            "seconds": secs,
+        }
+        for i, (secs, label, tag) in enumerate(TRANSFORM_FORMATS)
+    ]
     for idx, (seconds, platform, tag) in enumerate(TRANSFORM_FORMATS):
         clip_id = f"{job_id}-{idx + 1:02d}-{tag}"
         job.update(
@@ -556,11 +567,13 @@ def _render_transform(
             "mode": mode,
             "llm": llm_source,
             "voiceover": "edge-tts",
+            "platform": tag,
+            "seconds": seconds,
+            "variants": variants,
             "metadata_variants": meta,
             "metadata_source": meta_source,
             "original_channel": channel,
             "attribution": transform.attribution_line(channel),
-            "speed": render_meta.get("speed"),
             "speed": render_meta.get("speed"),
         }
         if thumb_path.exists():
@@ -618,6 +631,10 @@ def run(args: argparse.Namespace) -> int:
     global _ACTIVE_JOB_ID
     paths.ensure_dirs()
     cfg = common.load_config()
+    if getattr(args, "transform_speed", None):
+        cfg["transform_speed"] = args.transform_speed
+    if getattr(args, "clip_max_seconds", None):
+        cfg["clip_max_seconds"] = float(args.clip_max_seconds)
     num_shorts = int(args.num_shorts or cfg.get("shorts_per_video", 10))
     job_id = paths.safe_id(args.job_id or datetime.now().strftime("job-%Y%m%d-%H%M%S"))
     mode = getattr(args, "mode", "viral")
@@ -658,6 +675,7 @@ def run(args: argparse.Namespace) -> int:
         # creator so attribution keeps working for re-uploaded sources.
         channel = (
             channel
+            or (getattr(args, "original_channel", "") or "").strip()
             or os.getenv("ORIGINAL_CHANNEL", "").strip()
             or str(cfg.get("original_channel") or "").strip()
         )
@@ -1027,6 +1045,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--keep-source", action="store_true", help="Keep the downloaded source file")
     parser.add_argument("--no-notify", action="store_true", help="Do not send Telegram messages")
     parser.add_argument("--clip-max-seconds", type=float, default=25.0, help="Max clip length in seconds (default 25)")
+    parser.add_argument("--original-channel", help="Original creator handle for the attribution line")
+    parser.add_argument("--transform-speed", type=float, help="Footage speed for transform mode (1.1-1.2)")
 
     return parser
 

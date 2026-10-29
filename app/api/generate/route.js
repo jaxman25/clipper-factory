@@ -144,10 +144,10 @@ export async function POST(request) {
         '--num-shorts', String(numShorts),
         '--mode', mode,
         ...(originalChannel ? ['--original-channel', originalChannel] : []),
-        transformSpeed >= 1.1 && transformSpeed <= 1.2
+        ...(transformSpeed >= 1.1 && transformSpeed <= 1.2
           ? ['--transform-speed', String(transformSpeed)]
-          : [],
-        ['--clip-max-seconds', String(maxClipSeconds)],
+          : []),
+        '--clip-max-seconds', String(maxClipSeconds),
       ],
       jobId
     );

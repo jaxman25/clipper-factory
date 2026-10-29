@@ -1,8 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" fill="none">
   <defs>
     <linearGradient id="cf-blue" x1="200" y1="120" x2="830" y2="900" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#2F80ED"/>
-      <stop offset="1" stop-color="#0F4CCF"/>
+      <stop offset="0" stop-color="#C98A4A"/>
+      <stop offset="1" stop-color="#7A4A26"/>
     </linearGradient>
 
     <!-- sprocket holes punched out of the film strip -->
@@ -114,6 +114,6 @@
         <use href="#cf-scissor-half"/>
         <use href="#cf-scissor-half" transform="scale(1,-1)"/>
       </g>
-      <circle r="10" fill="#0F4CCF"/>
+      <circle r="10" fill="#7A4A26"/>
     </g>
 </svg>

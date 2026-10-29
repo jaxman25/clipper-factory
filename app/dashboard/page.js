@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import GeneratePanel from '@/components/studio/GeneratePanel';
 import ScheduleBoard from '@/components/studio/ScheduleBoard';
+import AnalyticsSummary from '@/components/studio/AnalyticsSummary';
 import ActivityFeed, { ClearLogsButton, RestoreLogsButton } from '@/components/studio/ActivityFeed';
 import { EmptyState, PageHeader, SectionCard, StatCard } from '@/components/studio/ui';
 import { useStudio } from '@/components/studio/StudioProvider';
@@ -29,7 +30,7 @@ const INTEGRATIONS = [
 ];
 
 export default function OverviewPage() {
-  const { clips, posted, avgScore, loading, timeZone, postingTimes, health, refresh, tokens } =
+  const { clips, posted, avgScore, loading, timeZone, postingTimes, health, refresh, tokens, analytics } =
     useStudio();
   const next = clips[0]?.scheduled_for;
   const upNext = clips.slice(0, 3);
@@ -73,6 +74,8 @@ export default function OverviewPage() {
           icon={CalendarClock}
         />
       </div>
+
+      <AnalyticsSummary analytics={analytics} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <div className="min-w-0 space-y-4 lg:col-span-2">

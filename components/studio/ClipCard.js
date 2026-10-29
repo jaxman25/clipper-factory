@@ -172,17 +172,17 @@ export default function ClipCard({ clip }) {
     .filter(([, value]) => value?.ok)
     .map(([key]) => key);
 
-  const isTransform = clip.mode === 'transform' && Array.isArray(clip.variants);
+  const isTransform = clip.mode === 'transform';
 
   function transformedBadge() {
     const speed = Number(clip.speed);
-    if (
+    const transformed =
       Number.isFinite(speed) &&
       speed >= 1.1 &&
       speed <= 1.2 &&
-      Array.isArray(clip.metadata_variants) !== false &&
-      clip.metadata_variants != null
-    ) {
+      Boolean(clip.voiceover) &&
+      clip.metadata_variants != null;
+    if (transformed) {
       return (
         <span className="inline-flex items-center gap-1 rounded-full bg-ok/15 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-ok backdrop-blur">
           <TrendingUp className="h-3 w-3" />
@@ -346,7 +346,7 @@ export default function ClipCard({ clip }) {
         {!note && posted && clip.posted_at && (
           <p className="text-[11px] text-subtle">Posted {formatInTZ(clip.posted_at, timeZone)}</p>
         )}
-        {isTransform && Array.isArray(clip.variants) && (
+        {isTransform && (
           <div className="mt-3 flex items-center gap-3 rounded-lg border border-line/60 bg-wash/40 p-3">
             <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-muted">
               <DollarSign className="h-3.5 w-3.5" />

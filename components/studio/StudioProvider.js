@@ -20,7 +20,7 @@ export function StudioProvider({ children }) {
   const [data, setData] = useState(EMPTY);
   const [health, setHealth] = useState(null);
   const [settings, setSettings] = useState(null);
-  const [analytics, setAnalytics] = useState(null);
+  const [analyticsFeed, setAnalyticsFeed] = useState(null);
   const [job, setJob] = useState(null);
   const [jobs, setJobs] = useState([]);
   const [mode, setMode] = useState('viral');
@@ -45,7 +45,7 @@ export function StudioProvider({ children }) {
       if (clipsRes.ok) setData(await clipsRes.json());
       if (healthRes.ok) setHealth(await healthRes.json());
       if (settingsRes.ok) setSettings(await settingsRes.json());
-      if (analyticsRes.ok) setAnalytics(await analyticsRes.json());
+      if (analyticsRes.ok) setAnalyticsFeed(await analyticsRes.json());
     } catch (err) {
       notify(`Could not load state: ${err.message}`);
     } finally {
@@ -198,7 +198,9 @@ export function StudioProvider({ children }) {
 
   const value = useMemo(
     () => {
-      const raw = (settings || {}).analytics;
+      // Prefer the dedicated /api/analytics feed (points + totals); the
+      // settings payload only carries analytics when it was stored there.
+      const raw = analyticsFeed?.points ? analyticsFeed : (settings || {}).analytics;
       const points = Array.isArray(raw?.points) ? raw.points : [];
       let views = 0;
       for (const p of points) {
@@ -238,7 +240,7 @@ export function StudioProvider({ children }) {
         setMode,
       };
     },
-    [data, clips, posted, avgScore, health, settings, loading, job, jobs, refresh, refreshJobs, applyConfig, startGeneration, reschedule, notify, mode]
+    [data, clips, posted, avgScore, health, settings, analyticsFeed, loading, job, jobs, refresh, refreshJobs, applyConfig, startGeneration, reschedule, notify, mode]
   );
 
   return (

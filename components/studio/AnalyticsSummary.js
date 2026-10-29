@@ -100,11 +100,10 @@ export default function AnalyticsSummary({ analytics }) {
                   fontSize: '12px',
                 }}
                 formatter={(value, name) => {
-                  const row = {
-                    views: fmt(value),
-                    earnings: `$${(value / 1000) * 0.5}.toFixed(2)`,
-                  };
-                  return [row[name === 'earnings' ? 'earnings' : 'views'], name];
+                  if (name === 'earnings') {
+                    return [`$${((value / 1000) * 0.5).toFixed(2)}`, 'earnings'];
+                  }
+                  return [fmt(value), 'views'];
                 }}
               />
               <Line

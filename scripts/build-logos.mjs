@@ -14,9 +14,12 @@ import path from 'node:path';
 const OUT = path.join(process.cwd(), 'assets', 'logos');
 const PUBLIC = path.join(process.cwd(), 'public');
 const PUBLIC_LOGOS = path.join(PUBLIC, 'assets', 'logos');
-const BLUE_LIGHT = '#2F80ED';
-const BLUE_DARK = '#0F4CCF';
-const NAVY = '#12121A';
+const BRAND_LIGHT = '#C98A4A';
+const BRAND_DARK = '#7A4A26';
+const NAVY = '#241712';
+
+const BLUE_LIGHT = BRAND_LIGHT;
+const BLUE_DARK = BRAND_DARK;
 
 const CX = 512;
 const CY = 512;

@@ -1,12 +1,203 @@
-# Clipper Factory — Render deployment guide
+# Clipper Factory
 
 ![Clipper Factory logo](assets/logos/icon-512.png)
 
 Paste one YouTube link → get 10 vertical shorts → two auto-post per day at
-**19:00 and 21:00 EAT** to Instagram Reels and TikTok.
+**19:00 and 21:00 EAT** to Instagram Reels and TikTok, with Telegram as a manual fallback.
 
-This document covers deployment on Render's **free** plan, every token you need, and the
-trade-offs that come with a 512 MB / ephemeral-disk host.
+This project is a full short-form clip pipeline: download, transcribe, score, reframe, caption,
+queue, and publish. The dashboard is a Next.js app; the worker is Python; rendering is ffmpeg.
+
+This readme covers what the repo contains, how the system is meant to run, how to set it up, and
+the trade-offs that come with a small, free-tier host.
+
+---
+
+## 1. What Clipper Factory is
+
+- **One link in.** Drop a YouTube URL into the dashboard.
+- **Ten shorts out.** The worker pulls the source at up to 1080p, transcribes it, scores the best
+  windows, reframes them to 9:16, burns word-pop captions, and queues the results.
+- **Two posts a day.** Clips are scheduled to 19:00 and 21:00 EAT and published to Instagram Reels
+  and TikTok automatically.
+- **Telegram fallback.** If a platform rejects a clip, the scheduler forwards it to Telegram so the
+  clip is not lost.
+- **Dashboard-first.** Generation, caption editing, rescheduling, logs, and settings all live in the
+  web app.
+
+---
+
+## 2. Repository map
+
+| Path | Role |
+| --- | --- |
+| `app/` | Next.js 14 dashboard: landing, generate, queue, settings, logs |
+| `components/studio/` | Shared dashboard components |
+| `app/api/` | Dashboard API: generate, clips, telegram, settings, logs, health |
+| `lib/` | Shared frontend/web utilities: store, time, auth |
+| `backend/main.py` | Clip generator: yt-dlp → faster-whisper → viral scoring → render → queue |
+| `backend/viral.py` | Scores 30–45s windows on hooks, questions, speech density, and volume spikes |
+| `backend/renderer.py` | 9:16 reframe, drum bed, caption burn-in, thumbnails, exportg |
+| `backend/captions.py` | Word-pop captions with hook and outro |
+| `backend/broll.py` | Pixabay-style B-roll handling for face-less fallbacks |
+| `backend/youtube_uploader.py` | YouTube Shorts posting via OAuth2 |
+| `scheduler/scheduler.py` | Posting loop and `--run-once` mode for manual or cron use |
+| `telegram_bot/bot.py` | Telegram bot with queue, `/postnow`, `/settings`, and optional scheduler |
+| `auto-post/instagram.js` | Meta Graph API Reels upload |
+| `auto-post/tiktok_auto.py` | Playwright TikTok Studio upload from a saved session |
+| `scripts/make_assets.py` | Synthesizes the drum loop, night ambience, and gradient card |
+| `scripts/smoke_render.py` | Offline render smoke test |
+| `scripts/build-logos.mjs` | Generates the logo pack from a single SVG |
+
+Generated media lives under `ACF_DATA_ROOT` (`/tmp` on Render):
+
+```
+/tmp/downloads      source video, deleted after the job
+/tmp/exports        <job>/<clip>.mp4, .jpg, metadata.json
+/tmp/queue         ready-to-post clips + JSON metadata
+/tmp/posted        published clips
+/tmp/state         settings, logs, job progress, tiktok auth
+```
+
+---
+
+## 3. At a glance: what the dashboard can do
+
+- Start a clip run from a YouTube link, with a choice of clip modes.
+- Watch job progress in the panel and in the activity feed.
+- View queued and posted clips, with thumbs, durations, viral scores, and schedule.
+- Edit captions, reschedule clips, and re-render individual clips.
+- Post clips now, or send a clip to Telegram.
+- See runtime health, posting slots, timezone, and integration status.
+- Manage slots, platforms, captions, hashtags, and integration tokens from settings.
+
+---
+
+## 4. Clip modes
+
+- **Viral moments** — pick the strongest windows from the transcript.
+- **Equal slices** — divide the source into evenly spaced clips.
+- **Transform** — AI rewrite plus voiceover, producing platform-shaped outputs at roughly
+  21s / 30s / 59s. Transform clips also expose AI metadata variants in the queue so titles,
+  descriptions, and hashtag sets can be picked and saved.
+
+---
+
+## 5. What a clip looks like
+
+- Vertical 1080×1920.
+- Face-aware cropping that follows the speaker; face-less clips get a cinematic fallback.
+- Word-pop captions burned in as 2–3 word cards, with a hook and outro baked in.
+- Yellow caption cards, drum bed under the speech, and a branded watermark on outputs.
+
+---
+
+## 6. Deployment options
+
+Two broad paths:
+
+- **Free Render deployment** on a small host, with ephemeral disk and a free-tier scheduler.
+- **Local development** using project folders instead of `/tmp`, with a separate bot terminal.
+
+This readme focuses on the parts that matter for both: setup, tokens, queue behavior, and the
+limits you will hit on a small host.
+
+---
+
+## 7. Tokens and integrations
+
+Only Telegram is required to boot.
+
+| Key | Purpose |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | BotFather token |
+| `TELEGRAM_CHAT_ID` | Where confirmations and alerts go |
+| `PIXABAY_API_KEY` | Free B-roll for face-less clips |
+| `IG_USER_ID`, `IG_ACCESS_TOKEN` | Instagram Reels publishing |
+| `TIKTOK_AUTH_B64` | Base64 of a Playwright TikTok session |
+| `YOUTUBE_CLIENT_ID`, `YOUTUBE_CLIENT_SECRET`, `YOUTUBE_REFRESH_TOKEN` | YouTube Shorts uploads via OAuth2 |
+| `YOUTUBE_SERVICE_ACCOUNT` | Alternative to OAuth refresh token |
+
+Tokens can live as env vars or be saved in the dashboard. On Render, env vars are the only permanent
+option.
+
+---
+
+## 8. Telegram bot
+
+Commands:
+
+```
+/start                 welcome + your chat id
+/clip <youtube url>    generate shorts
+/queue                 list queue
+/postnow [clip-id]     publish a clip now
+/settings              slots, integrations, queue health
+/cancel                stop the running generation
+```
+
+---
+
+## 9. Instagram, TikTok, and YouTube posting
+
+- **Instagram** uses the Meta Graph API and fetches the clip from a public media route.
+- **TikTok** uses a Playwright session because there is no free publishing API.
+- **YouTube Shorts** uses OAuth2 and uploads the first clip of a run when credentials are set.
+
+If a platform is not configured, the scheduler skips it and keeps the clip queued.
+
+---
+
+## 10. Local development
+
+```bash
+npm run dev
+python3 telegram_bot/bot.py
+
+# offline smoke test
+npm run smoke
+
+# real generation
+python3 backend/main.py --url "https://youtu.be/VIDEO_ID" --num-shorts 3
+```
+
+For local work, use a project folder instead of `/tmp`:
+
+```bash
+export ACF_DATA_ROOT="$PWD"
+```
+
+---
+
+## 11. Design notes
+
+- Captions are baked into the video, so they travel to every platform.
+- The scheduler is the source of truth for posting times.
+- One job at a time is enforced to keep CPU-bound rendering stable.
+- The media route is public by design so Meta can fetch published clips.
+- Generated assets are synthesized locally so the repo has no hard network dependency for audio.
+
+---
+
+## 12. Troubleshooting
+
+| Symptom | Likely cause |
+| --- | --- |
+| Cold start is slow | Normal on a free host; keep it awake with a health monitor |
+| Queue disappears after restart | Ephemeral disk; post clips or download before restart |
+| Job fails to start | Credits, lock, spawn error, or missing Python deps |
+| TikTok session missing | Re-create the Playwright session |
+| Instagram cannot fetch media | Public base URL, awake service, or route/auth mismatch |
+
+---
+
+## 13. Brand and assets
+
+The mark is a film-strip gear with scissors. The logo pack is generated once from
+`scripts/build-logos.mjs`; do not hand-edit the raster files.
+
+Current accent: warm brown and dark navy, with gold caption cards in rendered clips.
+
 
 ---
 
@@ -31,17 +222,16 @@ trade-offs that come with a 512 MB / ephemeral-disk host.
 Generated media lives under `ACF_DATA_ROOT` (`/tmp` on Render):
 
 ```
-/tmp/downloads   source video (deleted after the job)
-/tmp/exports     <job>/<clip>.mp4, .jpg, metadata.json
-/tmp/queue       ready-to-post clips + JSON metadata
-/tmp/posted      published clips
-/tmp/state       settings, schedule overrides, logs, job progress, tiktok auth
-/tmp/whisper_models  faster-whisper model cache
+/tmp/downloads      source video, deleted after the job
+/tmp/exports        <job>/<clip>.mp4, .jpg, metadata.json
+/tmp/queue         ready-to-post clips + JSON metadata
+/tmp/posted        published clips
+/tmp/state         settings, logs, job progress, tiktok auth
 ```
 
 ---
 
-## 2. Free-tier reality check (read this first)
+## 3. At a glance: what the dashboard can do
 
 | Constraint | What it means here |
 | --- | --- |
