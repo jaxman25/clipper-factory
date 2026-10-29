@@ -4,15 +4,27 @@
  *
  * The route imports Next-style "@/..." aliases, which plain Node cannot
  * resolve; registerHooks() maps them to the project root. Rejections happen
- * before any file access, so these tests never mutate log state.
+ * before any file access, so these tests never mutate shared state.
+ *
+ * The log file the route writes to is derived from ACF_DATA_ROOT at import
+ * time (lib/store.js computes DIRS once). To keep the size assertions
+ * decoupled from the live server - which keeps appending to the shared
+ * logs.jsonl - every test runs against its own throwaway ACF_DATA_ROOT.
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
 
 let route = null;
 let unavailable = null;
+
+// A dedicated temp root per process: the route resolves its log file from
+// ACF_DATA_ROOT at import time, so this must be set before the import.
+const TEST_DATA_ROOT = fs.mkdtempSync(path.join(os.tmpdir(), 'acf-logs-test-'));
+process.env.ACF_DATA_ROOT = TEST_DATA_ROOT;
+fs.mkdirSync(path.join(TEST_DATA_ROOT, 'state'), { recursive: true });
 
 const hasHooks = typeof (await import('node:module')).registerHooks === 'function';
 if (!hasHooks) {
@@ -48,10 +60,14 @@ function restoreEnv() {
   }
 }
 
-after(restoreEnv);
+after(() => {
+  restoreEnv();
+  fs.rmSync(TEST_DATA_ROOT, { recursive: true, force: true });
+});
 
-const DATA_ROOT = process.env.ACF_DATA_ROOT || '/tmp';
-const LOG_FILE = path.join(DATA_ROOT, 'state', 'logs.jsonl');
+// The route's own log file inside the throwaway data root - never the shared
+// one the live server writes to, so size checks are stable.
+const LOG_FILE = path.join(TEST_DATA_ROOT, 'state', 'logs.jsonl');
 const fileSnapshot = () => (fs.existsSync(LOG_FILE) ? fs.statSync(LOG_FILE).size : -1);
 
 const req = (method, headers = {}) =>
