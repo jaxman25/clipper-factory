@@ -9,7 +9,7 @@ import os
 from pathlib import Path
 
 try:
-    from . import common
+    from backend import common
 except ImportError:  # pragma: no cover
     import common  # type: ignore
 

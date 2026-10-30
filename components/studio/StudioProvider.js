@@ -191,16 +191,18 @@ export function StudioProvider({ children }) {
   }, [job?.id, job?.status, refresh, refreshJobs, notify]);
 
   const startGeneration = useCallback(
-    async (url, numShorts, mode = 'viral', youtubeAutoPost = null) => {
+    async (url, numShorts, mode = 'viral', youtubeAutoPost = null, userConfig = null) => {
+      const body = {
+        url,
+        num_shorts: Number(numShorts),
+        mode,
+        ...(youtubeAutoPost !== null && { youtube_auto_post: youtubeAutoPost }),
+        ...(userConfig && Object.keys(userConfig).length && { user_config: userConfig }),
+      };
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          url,
-          num_shorts: Number(numShorts),
-          mode,
-          ...(youtubeAutoPost !== null && { youtube_auto_post: youtubeAutoPost }),
-        }),
+        body: JSON.stringify(body),
       });
       const payload = await response.json();
       if (!response.ok) {
@@ -222,6 +224,60 @@ export function StudioProvider({ children }) {
     },
     [refreshJobs]
   );
+
+  const applySavedPreferences = useCallback(() => {
+    if (typeof window === 'undefined') return null;
+    try {
+      const raw = window.localStorage.getItem('userConfig');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== 'object') return null;
+      // Only expose the keys the backend knows how to override, and only when
+      // they look intentional. Missing keys are left undefined so the worker
+      // falls back to config.json for that run.
+      const out = {};
+      const num = (key) => {
+        if (key in parsed) {
+          const n = Number(parsed[key]);
+          if (Number.isFinite(n)) return n;
+        }
+        return undefined;
+      };
+      if (parsed.timezone && typeof parsed.timezone === 'string') out.timezone = parsed.timezone;
+      if (Array.isArray(parsed.posting_times) && parsed.posting_times.length) {
+        out.posting_times = parsed.posting_times.map((s) => String(s).trim()).filter(Boolean);
+      }
+      const _n_shorts = num('shorts_per_video');
+      const _n_clip_min = num('clip_min_seconds');
+      const _n_clip_max = num('clip_max_seconds');
+      const _n_speed = num('playback_speed');
+      const _n_drum = num('drum_volume_db');
+      const _n_words = num('caption_words_per_card');
+      const _n_hook = num('hook_seconds');
+      if (_n_shorts != null) out.shorts_per_video = _n_shorts;
+      if (_n_clip_min != null) out.clip_min_seconds = _n_clip_min;
+      if (_n_clip_max != null) out.clip_max_seconds = _n_clip_max;
+      if (_n_speed != null) out.playback_speed = _n_speed;
+      if (_n_drum != null) out.drum_volume_db = _n_drum;
+      if (_n_words != null) out.caption_words_per_card = _n_words;
+      if ('outro_text' in parsed && typeof parsed.outro_text === 'string') out.outro_text = parsed.outro_text;
+      if ('hashtags' in parsed && typeof parsed.hashtags === 'string') out.hashtags = parsed.hashtags;
+      if ('caption_color' in parsed && typeof parsed.caption_color === 'string') out.caption_color = parsed.caption_color;
+      if (parsed.instagram === true || parsed.instagram === false) out.instagram = parsed.instagram;
+      if (parsed.tiktok === true || parsed.tiktok === false) out.tiktok = parsed.tiktok;
+      if (parsed.youtube_auto_post === true || parsed.youtube_auto_post === false) out.youtube_auto_post = parsed.youtube_auto_post;
+      if ('outro_text' in parsed && typeof parsed.outro_text === 'string') out.outro_text = parsed.outro_text;
+      if ('hashtags' in parsed && typeof parsed.hashtags === 'string') out.hashtags = parsed.hashtags;
+      if ('caption_color' in parsed && typeof parsed.caption_color === 'string') out.caption_color = parsed.caption_color;
+      if (parsed.instagram === true || parsed.instagram === false) out.instagram = parsed.instagram;
+      if (parsed.tiktok === true || parsed.tiktok === false) out.tiktok = parsed.tiktok;
+      if (parsed.youtube_auto_post === true || parsed.youtube_auto_post === false) out.youtube_auto_post = parsed.youtube_auto_post;
+      return Object.keys(out).length ? out : null;
+    } catch (err) {
+      return null;
+    }
+  }, []);
+
 
   const reschedule = useCallback(
     async (id, iso) => {
@@ -245,6 +301,7 @@ export function StudioProvider({ children }) {
 
   const value = useMemo(
     () => {
+      const userConfig = applySavedPreferences();
       // Prefer the dedicated /api/analytics feed (points + totals); the
       // settings payload only carries analytics when it was stored there.
       const raw = analyticsFeed?.points ? analyticsFeed : (settings || {}).analytics;

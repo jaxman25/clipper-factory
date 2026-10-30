@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 try:
-    from . import common
+    from backend import common
 except ImportError:  # pragma: no cover - direct execution
     import common  # type: ignore
 

@@ -30,9 +30,9 @@ if str(HERE.parent) not in sys.path:
     sys.path.insert(0, str(HERE.parent))
 
 try:
-    from . import broll as broll_mod
-    from . import captions, common, paths, renderer, scheduling, telegram, transform, viral
-except ImportError:  # direct execution: python backend/main.py
+    from backend import broll as broll_mod
+    from backend import captions, common, paths, renderer, scheduling, telegram, transform, viral
+except ImportError:  # pragma: no cover - fallback for direct execution
     import broll as broll_mod  # type: ignore
     import captions  # type: ignore
     import common  # type: ignore
@@ -703,6 +703,45 @@ def run(args: argparse.Namespace) -> int:
         cfg["transform_speed"] = args.transform_speed
     if getattr(args, "clip_max_seconds", None):
         cfg["clip_max_seconds"] = float(args.clip_max_seconds)
+
+    # Per-job user-config overrides (from the browser localStorage Preferences).
+    # These only touch the fields the settings UI lets the user personalise and
+    # only for this run; the committed config.json is untouched.
+    if getattr(args, "user_timezone", None):
+        cfg["timezone"] = args.user_timezone
+    if getattr(args, "user_posting_times", None):
+        try:
+            parsed = json.loads(args.user_posting_times)
+            if isinstance(parsed, list) and parsed:
+                cfg["posting_times"] = [str(t).strip() for t in parsed if str(t).strip()]
+        except (TypeError, ValueError):
+            pass
+    for key, attr in [
+        ("shorts_per_video", "user_shorts_per_video"),
+        ("clip_min_seconds", "user_clip_min_seconds"),
+        ("clip_max_seconds", "user_clip_max_seconds"),
+        ("playback_speed", "user_playback_speed"),
+        ("drum_volume_db", "user_drum_volume_db"),
+        ("caption_words_per_card", "user_caption_words_per_card"),
+        ("hook_seconds", "user_hook_seconds"),
+        ("outro_seconds", "user_outro_seconds"),
+    ]:
+        val = getattr(args, attr, None)
+        if val is not None:
+            try:
+                cfg[key] = float(val)
+            except (TypeError, ValueError):
+                pass
+    if getattr(args, "user_outro_text", None):
+        cfg["outro_text"] = str(args.user_outro_text)
+    if getattr(args, "user_hashtags", None):
+        cfg["hashtags"] = str(args.user_hashtags)
+    if getattr(args, "user_caption_color", None):
+        cfg["caption_color"] = str(args.user_caption_color)
+    if getattr(args, "user_instagram", None):
+        cfg["platforms"]["instagram"] = args.user_instagram == "true"
+    if getattr(args, "user_tiktok", None):
+        cfg["platforms"]["tiktok"] = args.user_tiktok == "true"
     num_shorts = int(args.num_shorts or cfg.get("shorts_per_video", 10))
     job_id = paths.safe_id(args.job_id or datetime.now().strftime("job-%Y%m%d-%H%M%S"))
     mode = getattr(args, "mode", "viral")
@@ -1028,7 +1067,8 @@ def run(args: argparse.Namespace) -> int:
         # reads its credentials from the environment (YOUTUBE_* variables),
         # the same way every other integration reads its token.
         if cfg.get("youtube_auto_post"):
-            from . import youtube_uploader
+            from backend import youtube_uploader
+
             try:
                 upload_ok = youtube_uploader.upload_short(
                     video_path=str(job_dir / f"{queue_items[0]['id']}.mp4"),
@@ -1111,6 +1151,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override the dashboard default for YouTube auto-post this run",
     )
     parser.add_argument("--transform-speed", type=float, help="Footage speed for transform mode (1.1-1.2)")
+    parser.add_argument("--user-timezone", help="User preference: posting timezone for this run")
+    parser.add_argument("--user-posting-times", help="User preference: JSON array of posting times for this run")
+    parser.add_argument("--user-shorts-per-video", type=float, help="User preference: shorts per video for this run")
+    parser.add_argument("--user-clip-min-seconds", type=float, help="User preference: min clip length for this run")
+    parser.add_argument("--user-clip-max-seconds", type=float, help="User preference: max clip length for this run")
+    parser.add_argument("--user-playback-speed", type=float, help="User preference: playback speed for this run")
+    parser.add_argument("--user-drum-volume-db", type=float, help="User preference: drum volume dB for this run")
+    parser.add_argument("--user-caption-words-per-card", type=float, help="User preference: caption words per card for this run")
+    parser.add_argument("--user-outro-text", help="User preference: outro text for this run")
+    parser.add_argument("--user-hashtags", help="User preference: hashtags for this run")
+    parser.add_argument("--user-caption-color", help="User preference: caption color hex for this run")
+    parser.add_argument("--user-hook-seconds", type=float, help="User preference: hook seconds for this run")
+    parser.add_argument("--user-outro-seconds", type=float, help="User preference: outro seconds for this run")
+    parser.add_argument("--user-instagram", choices=["true", "false"], help="User preference: enable Instagram for this run")
+    parser.add_argument("--user-tiktok", choices=["true", "false"], help="User preference: enable TikTok for this run")
 
     return parser
 

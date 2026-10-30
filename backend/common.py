@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 try:  # works both as ``python backend/main.py`` and ``python -m backend.main``
-    from . import paths
+    from backend import paths
 except ImportError:  # pragma: no cover
     import paths  # type: ignore
 

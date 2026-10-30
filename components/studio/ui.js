@@ -48,6 +48,25 @@ export function SectionCard({ title, description, actions, children, className }
   );
 }
 
+export function Input({ value, onChange, type = 'text', min, max, step, placeholder, hint, className = '' }) {
+  const wrapper = cn('flex flex-col gap-1', className);
+  return (
+    <div className={wrapper}>
+      <input
+        type={type}
+        value={value}
+        onChange={onChange}
+        min={min}
+        max={max}
+        step={step}
+        placeholder={placeholder}
+        className="input"
+      />
+      {hint && <p className="text-[11px] text-subtle">{hint}</p>}
+    </div>
+  );
+}
+
 export function EmptyState({ icon: Icon, title, description, action }) {
   return (
     <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-line px-6 py-14 text-center">

@@ -58,7 +58,7 @@ function Progress({ job, onClear, onCancel, onCanceling }) {
 }
 
 export default function GeneratePanel({ autoFocus = false }) {
-  const { config, job, setJob, startGeneration, notify, mode, setMode } = useStudio();
+  const { config, job, setJob, startGeneration, notify, mode, setMode, userConfig } = useStudio();
   const [url, setUrl] = useState('');
   const [num, setNum] = useState(config?.shorts_per_video || 10);
   const [busy, setBusy] = useState(false);
@@ -112,7 +112,7 @@ export default function GeneratePanel({ autoFocus = false }) {
     }
     setBusy(true);
     try {
-      await startGeneration(url.trim(), num, mode, effectiveAutoPostRef.current);
+      await startGeneration(url.trim(), num, mode, effectiveAutoPostRef.current, userConfig);
       setUrl('');
       notify('Generation started — clips land in 5–15 minutes');
     } catch (err) {

@@ -85,6 +85,28 @@ export async function POST(request) {
   const originalChannel = String(body.original_channel || '').trim();
   const transformSpeed = Number(body.transform_speed);
   const maxClipSeconds = Math.max(1, Math.min(120, Number(body.clip_max_seconds) || 25));
+  const userConfig =
+    body.user_config && typeof body.user_config === 'object'
+      ? body.user_config
+      : null;
+  const overrides = {
+    timezone: userConfig?.timezone,
+    posting_times: userConfig?.posting_times,
+    shorts_per_video: userConfig?.shorts_per_video,
+    clip_min_seconds: userConfig?.clip_min_seconds,
+    clip_max_seconds: userConfig?.clip_max_seconds,
+    playback_speed: userConfig?.playback_speed,
+    drum_volume_db: userConfig?.drum_volume_db,
+    caption_words_per_card: userConfig?.caption_words_per_card,
+    outro_text: userConfig?.outro_text,
+    hashtags: userConfig?.hashtags,
+    caption_color: userConfig?.caption_color,
+    hook_seconds: userConfig?.hook_seconds,
+    outro_seconds: userConfig?.outro_seconds,
+    instagram: userConfig?.instagram,
+    tiktok: userConfig?.tiktok,
+    youtube_auto_post: userConfig?.youtube_auto_post,
+  };
   ensureDirs();
 
   // Refuse to stampede the free CPU with a second whisper/ffmpeg job.
@@ -151,6 +173,26 @@ export async function POST(request) {
           ? ['--transform-speed', String(transformSpeed)]
           : []),
         '--clip-max-seconds', String(maxClipSeconds),
+        ...(overrides.timezone != null ? ['--user-timezone', String(overrides.timezone)] : []),
+        ...(overrides.posting_times && Array.isArray(overrides.posting_times) && overrides.posting_times.length
+          ? ['--user-posting-times', JSON.stringify(overrides.posting_times)]
+          : []),
+        ...(overrides.shorts_per_video != null ? ['--user-shorts-per-video', String(overrides.shorts_per_video)] : []),
+        ...(overrides.clip_min_seconds != null ? ['--user-clip-min-seconds', String(overrides.clip_min_seconds)] : []),
+        ...(overrides.playback_speed != null ? ['--user-playback-speed', String(overrides.playback_speed)] : []),
+        ...(overrides.drum_volume_db != null ? ['--user-drum-volume-db', String(overrides.drum_volume_db)] : []),
+        ...(overrides.caption_words_per_card != null ? ['--user-caption-words-per-card', String(overrides.caption_words_per_card)] : []),
+        ...(overrides.clip_max_seconds != null ? ['--user-clip-max-seconds', String(overrides.clip_max_seconds)] : []),
+        ...(overrides.user_config != null && typeof overrides.user_config === 'object'
+          ? ['--user-config-json', JSON.stringify(overrides.user_config)]
+          : []),
+        ...(overrides.outro_text != null ? ['--user-outro-text', overrides.outro_text] : []),
+        ...(overrides.hashtags != null ? ['--user-hashtags', overrides.hashtags] : []),
+        ...(overrides.caption_color != null ? ['--user-caption-color', overrides.caption_color] : []),
+        ...(overrides.hook_seconds != null ? ['--user-hook-seconds', String(overrides.hook_seconds)] : []),
+        ...(overrides.outro_seconds != null ? ['--user-outro-seconds', String(overrides.outro_seconds)] : []),
+        ...(overrides.instagram === true ? ['--user-instagram', 'true'] : overrides.instagram === false ? ['--user-instagram', 'false'] : []),
+        ...(overrides.tiktok === true ? ['--user-tiktok', 'true'] : overrides.tiktok === false ? ['--user-tiktok', 'false'] : []),
       ],
       jobId
     );

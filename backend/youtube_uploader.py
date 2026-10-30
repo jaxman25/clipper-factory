@@ -26,7 +26,7 @@ if str(HERE.parent) not in sys.path:
     sys.path.insert(0, str(HERE.parent))
 
 try:
-    from . import common, paths
+    from backend import common, paths
 except ImportError:  # pragma: no cover
     import common  # type: ignore
     import paths  # type: ignore

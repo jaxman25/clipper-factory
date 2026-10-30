@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 try:
-    from . import captions, common, paths
+    from backend import captions, common, paths
 except ImportError:  # pragma: no cover
     import captions  # type: ignore
     import common  # type: ignore
@@ -112,8 +112,10 @@ def detect_face_center(video: Path, start: float, end: float) -> tuple[float, fl
     """
     try:
         import mediapipe as mp
-        from mediapipe.tasks import python
+        from mediapipe.tasks import python as _tasks_python
         from mediapipe.tasks.python import vision
+        from mediapipe.tasks.python.vision.core import vision_task_running_mode as running_mode
+        from mediapipe.tasks.python.core.base_options import BaseOptions
     except Exception as exc:  # dependency missing / unsupported platform
         common.info(f"face detection unavailable ({exc}); using cinematic fallback")
         return None
@@ -126,8 +128,8 @@ def detect_face_center(video: Path, start: float, end: float) -> tuple[float, fl
     landmarker = None
     try:
         options = vision.FaceLandmarkerOptions(
-            base_options=mp.tasks.BaseOptions(model_asset_path=str(model_path)),
-            running_mode=python.RunnerOptions.RUNNING_MODE_VIDEO,
+            base_options=BaseOptions(model_asset_path=str(model_path)),
+            running_mode=running_mode.VisionTaskRunningMode.VIDEO,
             num_faces=1,
             min_face_detection_confidence=0.4,
             min_tracking_confidence=0.5,
