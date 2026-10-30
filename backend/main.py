@@ -1180,7 +1180,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--posting-times", help="User preference: JSON array of posting times for this run")
     parser.add_argument("--shorts-per-video", type=float, help="User preference: shorts per video for this run")
     parser.add_argument("--clip-min-seconds", type=float, help="User preference: min clip length for this run")
-    parser.add_argument("--clip-max-seconds", type=float, help="User preference: max clip length for this run")
     parser.add_argument("--playback-speed", type=float, help="User preference: playback speed for this run")
     parser.add_argument("--drum-volume-db", type=float, help="User preference: drum volume dB for this run")
     parser.add_argument("--caption-words-per-card", type=float, help="User preference: caption words per card for this run")

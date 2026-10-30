@@ -104,18 +104,15 @@ def _fonts_dir() -> Path | None:
 def detect_face_center(video: Path, start: float, end: float) -> tuple[float, float] | None:
     """Median face centre (x, y as 0..1 fractions) across sampled frames.
 
-    Uses the modern mediapipe.tasks API (FaceLandmarker in VIDEO mode), which
-    is the only app-level task available in mediapipe >= 0.10 that exposes a
-    2D bounding box (location_data.relative_bounding_box). Returns the same
-    (x, y) 0..1 fractions the old mp.solutions.face_detection did, so the
+    Uses the modern mediapipe.tasks API (FaceLandmarker in IMAGE mode), which
+    accepts each sampled frame as a single still image. Returning the median
+    (x, y) 0..1 fractions is unchanged from the VIDEO-mode version, so the
     rest of the renderer needs no changes.
     """
     try:
         import mediapipe as mp
         from mediapipe.tasks import python as _tasks_python
         from mediapipe.tasks.python import vision
-        from mediapipe.tasks.python.vision.core import vision_task_running_mode as running_mode
-        from mediapipe.tasks.python.core.base_options import BaseOptions
     except Exception as exc:  # dependency missing / unsupported platform
         common.info(f"face detection unavailable ({exc}); using cinematic fallback")
         return None
@@ -129,7 +126,7 @@ def detect_face_center(video: Path, start: float, end: float) -> tuple[float, fl
     try:
         options = vision.FaceLandmarkerOptions(
             base_options=BaseOptions(model_asset_path=str(model_path)),
-            running_mode=running_mode.VisionTaskRunningMode.VIDEO,
+            running_mode=vision.VisionTaskRunningMode.IMAGE,
             num_faces=1,
             min_face_detection_confidence=0.4,
             min_tracking_confidence=0.5,
