@@ -191,11 +191,16 @@ export function StudioProvider({ children }) {
   }, [job?.id, job?.status, refresh, refreshJobs, notify]);
 
   const startGeneration = useCallback(
-    async (url, numShorts, mode = 'viral') => {
+    async (url, numShorts, mode = 'viral', youtubeAutoPost = null) => {
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, num_shorts: Number(numShorts), mode }),
+        body: JSON.stringify({
+          url,
+          num_shorts: Number(numShorts),
+          mode,
+          ...(youtubeAutoPost !== null && { youtube_auto_post: youtubeAutoPost }),
+        }),
       });
       const payload = await response.json();
       if (!response.ok) {

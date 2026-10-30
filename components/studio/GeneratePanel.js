@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertCircle, Link2, Loader2, Sparkles } from 'lucide-react';
+import { Switch } from '@/components/studio/ui';
 import { useStudio } from '@/components/studio/StudioProvider';
 
 function Progress({ job, onClear, onCancel, onCanceling }) {
@@ -64,6 +65,45 @@ export default function GeneratePanel({ autoFocus = false }) {
   const [canceling, setCanceling] = useState(false);
   const running = job?.status === 'running';
 
+  // YouTube auto-post is a per-user preference stored in the browser. The
+  // server still owns the default (config.youtube_auto_post), but a value
+  // the user explicitly toggled survives reloads via localStorage and wins
+  // over the server default until the user toggles it back.
+  const YOUTUBE_AUTO_POST_KEY = 'youtubeAutoPost';
+  const effectiveAutoPostRef = useRef(config?.youtube_auto_post);
+  const [autoPostChecked, setAutoPostChecked] = useState(() => {
+    if (typeof localStorage === 'undefined') return Boolean(config?.youtube_auto_post);
+    const stored = localStorage.getItem(YOUTUBE_AUTO_POST_KEY);
+    if (stored !== null) {
+      const parsed = stored === 'true';
+      effectiveAutoPostRef.current = parsed;
+      return parsed;
+    }
+    effectiveAutoPostRef.current = Boolean(config?.youtube_auto_post);
+    return Boolean(config?.youtube_auto_post);
+  });
+
+  // When the server config arrives (or re-fetches), refresh the default unless
+  // the user has already overridden it with a localStorage value.
+  useEffect(() => {
+    if (typeof localStorage === 'undefined') return;
+    const stored = localStorage.getItem(YOUTUBE_AUTO_POST_KEY);
+    if (stored !== null) return; // user choice wins; don't clobber it with a refresh
+    const next = Boolean(config?.youtube_auto_post);
+    effectiveAutoPostRef.current = next;
+    setAutoPostChecked(next);
+  }, [config?.youtube_auto_post]);
+
+  const toggleAutoPost = useCallback(
+    (next) => {
+      if (typeof localStorage === 'undefined') return;
+      localStorage.setItem(YOUTUBE_AUTO_POST_KEY, String(next));
+      effectiveAutoPostRef.current = next;
+      setAutoPostChecked(next);
+    },
+    [],
+  );
+
   async function submit(event) {
     event.preventDefault();
     if (!url.trim()) {
@@ -72,7 +112,7 @@ export default function GeneratePanel({ autoFocus = false }) {
     }
     setBusy(true);
     try {
-      await startGeneration(url.trim(), num, mode);
+      await startGeneration(url.trim(), num, mode, effectiveAutoPostRef.current);
       setUrl('');
       notify('Generation started — clips land in 5–15 minutes');
     } catch (err) {
@@ -196,9 +236,20 @@ export default function GeneratePanel({ autoFocus = false }) {
         </div>
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-lg bg-wash p-3">
-          <span className="text-xs text-muted">Auto-post to YouTube Shorts</span>
-          <span className="text-xs text-muted">
-            {config?.youtube_auto_post ? 'On' : 'Off'} · set in config.json
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted">Auto-post to YouTube Shorts</span>
+            <Switch
+              id="youtube-auto-post"
+              label={autoPostChecked ? 'On' : 'Off'}
+              checked={autoPostChecked}
+              onChange={toggleAutoPost}
+              disabled={busy || running}
+            />
+          </div>
+          <span className="text-[11px] text-subtle">
+            {typeof window !== 'undefined' && localStorage.getItem('youtubeAutoPost') != null
+              ? 'Saved in this browser'
+              : 'Default from config'}
           </span>
         </div>
 

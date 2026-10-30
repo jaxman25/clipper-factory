@@ -78,6 +78,8 @@ export async function POST(request) {
       { status: 400 }
     );
   }
+  const youtubeAutoPost =
+    body.youtube_auto_post === true ? true : body.youtube_auto_post === false ? false : null;
   // Transform mode fields (anti-flag pipeline)
   const sourceUrl = url;
   const originalChannel = String(body.original_channel || '').trim();
@@ -144,6 +146,7 @@ export async function POST(request) {
         '--num-shorts', String(numShorts),
         '--mode', mode,
         ...(originalChannel ? ['--original-channel', originalChannel] : []),
+        ...(youtubeAutoPost !== null ? ['--youtube-auto-post', String(youtubeAutoPost)] : []),
         ...(transformSpeed >= 1.1 && transformSpeed <= 1.2
           ? ['--transform-speed', String(transformSpeed)]
           : []),

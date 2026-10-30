@@ -73,3 +73,60 @@ export function Skeleton({ className }) {
     />
   );
 }
+
+/** Small binary toggle (On/Off) for boolean settings.
+ *
+ * Controlled: the parent owns `value`; `onChange` fires whenever the user
+ * flips it. On its own it does not persist anything - callers that want
+ * localStorage/session persistence should keep their own state and write it
+ * on `onChange`.
+ */
+export function Switch({
+  checked,
+  onChange,
+  disabled = false,
+  className,
+  id,
+  label,
+}) {
+  const handleClick = () => {
+    if (disabled) return;
+    onChange(!checked);
+  };
+
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-3 cursor-pointer select-none rounded-lg border border-line/70 bg-wash px-4 py-2 text-sm font-medium text-fg/90 transition hover:bg-wash-strong hover:text-fg',
+        disabled && 'pointer-events-none opacity-50',
+        className
+      )}
+    >
+      <span
+        className={cn(
+          'relative inline-flex h-6 w-11 shrink-0 rounded-full transition-colors duration-150',
+          checked ? 'bg-brand' : 'bg-wash-strong'
+        )}
+        role="switch"
+        aria-checked={checked}
+        aria-label={label || undefined}
+        tabIndex={disabled ? -1 : 0}
+        onClick={handleClick}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            handleClick();
+          }
+        }}
+      >
+        <span
+          className={cn(
+            'pointer-events-none absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-white shadow-sm transition-transform duration-150',
+            checked ? 'translate-x-5' : 'translate-x-0'
+          )}
+        />
+      </span>
+      {label != null && <span className="shrink-0">{label}</span>}
+    </span>
+  );
+}

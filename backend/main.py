@@ -697,6 +697,8 @@ def run(args: argparse.Namespace) -> int:
     global _ACTIVE_JOB_ID
     paths.ensure_dirs()
     cfg = common.load_config()
+    if getattr(args, "youtube_auto_post", None):
+        cfg["youtube_auto_post"] = args.youtube_auto_post == "true"
     if getattr(args, "transform_speed", None):
         cfg["transform_speed"] = args.transform_speed
     if getattr(args, "clip_max_seconds", None):
@@ -1102,6 +1104,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-notify", action="store_true", help="Do not send Telegram messages")
     parser.add_argument("--clip-max-seconds", type=float, default=25.0, help="Max clip length in seconds (default 25)")
     parser.add_argument("--original-channel", help="Original creator handle for the attribution line")
+    parser.add_argument(
+        "--youtube-auto-post",
+        choices=["true", "false"],
+        dest="youtube_auto_post",
+        help="Override the dashboard default for YouTube auto-post this run",
+    )
     parser.add_argument("--transform-speed", type=float, help="Footage speed for transform mode (1.1-1.2)")
 
     return parser
