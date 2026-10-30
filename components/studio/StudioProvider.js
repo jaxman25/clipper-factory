@@ -192,13 +192,15 @@ export function StudioProvider({ children }) {
 
   const startGeneration = useCallback(
     async (url, numShorts, mode = 'viral', youtubeAutoPost = null, userConfig = null) => {
+      const pc = userConfig || applySavedPreferences() || null;
       const body = {
         url,
         num_shorts: Number(numShorts),
         mode,
         ...(youtubeAutoPost !== null && { youtube_auto_post: youtubeAutoPost }),
-        ...(userConfig && Object.keys(userConfig).length && { user_config: userConfig }),
+
       };
+      const pick = (key) => pc ? pc[key] : undefined;
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

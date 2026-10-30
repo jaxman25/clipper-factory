@@ -178,19 +178,24 @@ export async function POST(request) {
           ? ['--user-posting-times', JSON.stringify(overrides.posting_times)]
           : []),
         ...(overrides.shorts_per_video != null ? ['--user-shorts-per-video', String(overrides.shorts_per_video)] : []),
-        ...(overrides.clip_min_seconds != null ? ['--user-clip-min-seconds', String(overrides.clip_min_seconds)] : []),
-        ...(overrides.playback_speed != null ? ['--user-playback-speed', String(overrides.playback_speed)] : []),
-        ...(overrides.drum_volume_db != null ? ['--user-drum-volume-db', String(overrides.drum_volume_db)] : []),
-        ...(overrides.caption_words_per_card != null ? ['--user-caption-words-per-card', String(overrides.caption_words_per_card)] : []),
-        ...(overrides.clip_max_seconds != null ? ['--user-clip-max-seconds', String(overrides.clip_max_seconds)] : []),
+        ...(overrides.timezone != null ? ['--timezone', overrides.timezone] : []),
+        ...(overrides.posting_times && Array.isArray(overrides.posting_times) && overrides.posting_times.length
+          ? ['--posting-times', JSON.stringify(overrides.posting_times)]
+          : []),
+        ...(overrides.shorts_per_video != null ? ['--shorts-per-video', String(overrides.shorts_per_video)] : []),
+        ...(overrides.clip_min_seconds != null ? ['--clip-min-seconds', String(overrides.clip_min_seconds)] : []),
+        ...(overrides.clip_max_seconds != null ? ['--clip-max-seconds', String(overrides.clip_max_seconds)] : []),
+        ...(overrides.playback_speed != null ? ['--playback-speed', String(overrides.playback_speed)] : []),
+        ...(overrides.drum_volume_db != null ? ['--drum-volume-db', String(overrides.drum_volume_db)] : []),
+        ...(overrides.caption_words_per_card != null ? ['--caption-words-per-card', String(overrides.caption_words_per_card)] : []),
         ...(overrides.user_config != null && typeof overrides.user_config === 'object'
           ? ['--user-config-json', JSON.stringify(overrides.user_config)]
           : []),
         ...(overrides.outro_text != null ? ['--user-outro-text', overrides.outro_text] : []),
         ...(overrides.hashtags != null ? ['--user-hashtags', overrides.hashtags] : []),
         ...(overrides.caption_color != null ? ['--user-caption-color', overrides.caption_color] : []),
-        ...(overrides.hook_seconds != null ? ['--user-hook-seconds', String(overrides.hook_seconds)] : []),
-        ...(overrides.outro_seconds != null ? ['--user-outro-seconds', String(overrides.outro_seconds)] : []),
+        ...(overrides.hook_seconds != null ? ['--hook-seconds', String(overrides.hook_seconds)] : []),
+        ...(overrides.outro_seconds != null ? ['--outro-seconds', String(overrides.outro_seconds)] : []),
         ...(overrides.instagram === true ? ['--user-instagram', 'true'] : overrides.instagram === false ? ['--user-instagram', 'false'] : []),
         ...(overrides.tiktok === true ? ['--user-tiktok', 'true'] : overrides.tiktok === false ? ['--user-tiktok', 'false'] : []),
       ],

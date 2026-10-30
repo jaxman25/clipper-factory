@@ -742,6 +742,31 @@ def run(args: argparse.Namespace) -> int:
         cfg["platforms"]["instagram"] = args.user_instagram == "true"
     if getattr(args, "user_tiktok", None):
         cfg["platforms"]["tiktok"] = args.user_tiktok == "true"
+    if getattr(args, "timezone", None):
+        cfg["timezone"] = args.timezone
+    if getattr(args, "posting_times", None):
+        try:
+            parsed = json.loads(args.posting_times)
+            if isinstance(parsed, list) and parsed:
+                cfg["posting_times"] = [str(t).strip() for t in parsed if str(t).strip()]
+        except (TypeError, ValueError):
+            pass
+    for key, attr in [
+        ("shorts_per_video", "shorts_per_video"),
+        ("clip_min_seconds", "clip_min_seconds"),
+        ("clip_max_seconds", "clip_max_seconds"),
+        ("playback_speed", "playback_speed"),
+        ("drum_volume_db", "drum_volume_db"),
+        ("caption_words_per_card", "caption_words_per_card"),
+        ("hook_seconds", "hook_seconds"),
+        ("outro_seconds", "outro_seconds"),
+    ]:
+        val = getattr(args, attr, None)
+        if val is not None:
+            try:
+                cfg[key] = float(val)
+            except (TypeError, ValueError):
+                pass
     num_shorts = int(args.num_shorts or cfg.get("shorts_per_video", 10))
     job_id = paths.safe_id(args.job_id or datetime.now().strftime("job-%Y%m%d-%H%M%S"))
     mode = getattr(args, "mode", "viral")
@@ -1151,6 +1176,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override the dashboard default for YouTube auto-post this run",
     )
     parser.add_argument("--transform-speed", type=float, help="Footage speed for transform mode (1.1-1.2)")
+    parser.add_argument("--timezone", help="User preference: posting timezone for this run")
+    parser.add_argument("--posting-times", help="User preference: JSON array of posting times for this run")
+    parser.add_argument("--shorts-per-video", type=float, help="User preference: shorts per video for this run")
+    parser.add_argument("--clip-min-seconds", type=float, help="User preference: min clip length for this run")
+    parser.add_argument("--clip-max-seconds", type=float, help="User preference: max clip length for this run")
+    parser.add_argument("--playback-speed", type=float, help="User preference: playback speed for this run")
+    parser.add_argument("--drum-volume-db", type=float, help="User preference: drum volume dB for this run")
+    parser.add_argument("--caption-words-per-card", type=float, help="User preference: caption words per card for this run")
+    parser.add_argument("--caption-color", help="User preference: caption color hex for this run")
+    parser.add_argument("--hook-seconds", type=float, help="User preference: hook seconds for this run")
+    parser.add_argument("--outro-seconds", type=float, help="User preference: outro seconds for this run")
     parser.add_argument("--user-timezone", help="User preference: posting timezone for this run")
     parser.add_argument("--user-posting-times", help="User preference: JSON array of posting times for this run")
     parser.add_argument("--user-shorts-per-video", type=float, help="User preference: shorts per video for this run")
@@ -1166,7 +1202,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--user-outro-seconds", type=float, help="User preference: outro seconds for this run")
     parser.add_argument("--user-instagram", choices=["true", "false"], help="User preference: enable Instagram for this run")
     parser.add_argument("--user-tiktok", choices=["true", "false"], help="User preference: enable TikTok for this run")
-
     return parser
 
 
