@@ -1,16 +1,18 @@
 /**
- * Integration tests for setting -> state synchronisation against a running
+ * Integration tests for the read-only settings contract against a running
  * server.
  *
  *   npm run dev          # in one terminal
  *   npm test             # in another
  *
- * Guards the contract the dashboard relies on: once a settings write is
- * accepted, every other read endpoint reports the new values on the very next
- * request, and none of them may be cached. A regression here is what makes the
- * overview look stale after editing Auto-Post Settings.
+ * Credentials and settings are environment-only (Render's disk is wiped on
+ * every deploy), so /api/settings has no working write path: PUT is rejected
+ * with 403 and GET reports the effective config.json values plus which
+ * credential environment variables the process can see. None of the reads may
+ * be cached, or the dashboard would render an old copy.
  *
- * The originals are always restored, so the test leaves config unchanged.
+ * The suite never writes successfully, so config is expected to be unchanged
+ * before and after it runs - which the teardown asserts.
  */
 import assert from 'node:assert/strict';
 import { after, describe, it } from 'node:test';
@@ -52,8 +54,8 @@ if (!available) {
   );
 }
 
-// Read the originals once, before any test mutates them (the describe body
-// itself must stay synchronous, so this runs at module scope).
+// Snapshot the config once, before any test runs (the describe body itself
+// must stay synchronous, so this happens at module scope).
 const initial = available ? (await getJson('/api/settings')).body : null;
 
 const original = {
@@ -65,47 +67,36 @@ const original = {
 describe('settings sync', { skip: available ? false : 'server not running' }, () => {
   after(async () => {
     if (!original.posting_times?.length) return;
-    await fetch(`${BASE}/api/settings`, {
-      method: 'PUT',
-      headers: headers({ 'Content-Type': 'application/json' }),
-      cache: 'no-store',
-      body: JSON.stringify({ settings: original }),
-    });
+    // Nothing in this suite may change configuration: there is no write path
+    // left, so the config must still match the snapshot it took at startup.
     const { body } = await getJson('/api/settings');
-    assert.deepEqual(body?.config?.posting_times, original.posting_times, 'originals must be restored');
+    assert.deepEqual(body?.config?.posting_times, original.posting_times, 'config must stay unchanged');
     assert.equal(body?.config?.timezone, original.timezone);
     assert.equal(body?.config?.youtube_auto_post, original.youtube_auto_post);
   });
 
-  it('a saved setting is visible to every consumer on the next request', async () => {
-    const times = ['06:30', '17:45'];
-    const zone = original.timezone === 'Africa/Lagos' ? 'Africa/Nairobi' : 'Africa/Lagos';
-    const autoPost = !original.youtube_auto_post;
-
+  it('PUT /api/settings is rejected with 403 (env-only deployment)', async () => {
     const put = await fetch(`${BASE}/api/settings`, {
       method: 'PUT',
       headers: headers({ 'Content-Type': 'application/json' }),
       cache: 'no-store',
       body: JSON.stringify({
-        settings: { posting_times: times, timezone: zone, youtube_auto_post: autoPost },
+        settings: { posting_times: ['06:30', '17:45'], timezone: 'Africa/Lagos' },
+        tokens: { TELEGRAM_BOT_TOKEN: 'should-never-be-stored' },
       }),
     });
-    assert.equal(put.status, 200);
-    const saved = await put.json();
-    assert.deepEqual(saved.saved.posting_times, times, 'PUT must echo the normalised values it stored');
 
-    // No delay: the very next reads must already carry the new values.
-    const clips = await getJson('/api/clips');
-    assert.deepEqual(clips.body.config.posting_times, times, '/api/clips served a stale posting_times');
-    assert.equal(clips.body.config.timezone, zone, '/api/clips served a stale time zone');
-    assert.equal(clips.body.config.youtube_auto_post, autoPost, '/api/clips served a stale auto-post flag');
+    assert.equal(put.status, 403);
+    const payload = await put.json();
+    assert.equal(
+      payload.error,
+      'Settings are managed via environment variables on this deployment.'
+    );
 
-    const health = await getJson('/api/health');
-    assert.deepEqual(health.body.posting_times, times, '/api/health served stale posting times');
-    assert.equal(health.body.timezone, zone, '/api/health served a stale time zone');
-
-    const reread = await getJson('/api/settings');
-    assert.deepEqual(reread.body.config.posting_times, times, 'the write was not persisted');
+    // The rejection must leave the stored configuration untouched.
+    const { body } = await getJson('/api/settings');
+    assert.deepEqual(body.config.posting_times, original.posting_times, 'a rejected PUT must not change anything');
+    assert.equal(body.config.timezone, original.timezone);
   });
 
   it('state endpoints forbid caching so a page cannot reuse an old copy', async () => {
@@ -119,9 +110,27 @@ describe('settings sync', { skip: available ? false : 'server not running' }, ()
     }
   });
 
-  it('settings reads never expose stored tokens', async () => {
+  it('GET /api/settings returns config, tokens, runtime and queue counts', async () => {
     const { body } = await getJson('/api/settings');
-    assert.equal('tokens' in (body.saved || {}), false);
-    assert.ok(body.tokens && typeof body.tokens === 'object', 'a redacted token status map is expected instead');
+
+    assert.ok(body.config && typeof body.config === 'object', 'config must be present');
+    assert.ok(Array.isArray(body.config.posting_times) && body.config.posting_times.length, 'posting_times come from config.json');
+    assert.equal(typeof body.config.timezone, 'string');
+
+    assert.ok(body.tokens && typeof body.tokens === 'object', 'a redacted token status map is expected');
+    for (const [key, status] of Object.entries(body.tokens)) {
+      assert.equal(typeof status.configured, 'boolean', `${key} must report a boolean`);
+      assert.equal(typeof status.hint, 'string', `${key} must carry only a redacted hint`);
+      assert.equal('value' in status, false, `${key} must never echo the secret itself`);
+    }
+
+    assert.ok(body.runtime && typeof body.runtime === 'object', 'runtime details must be present');
+    assert.equal(typeof body.runtime.data_root, 'string');
+    assert.equal(typeof body.runtime.whisper_model, 'string');
+
+    assert.equal(typeof body.queue, 'number', 'queue count must be present');
+    assert.equal(typeof body.posted, 'number', 'posted count must be present');
+
+    assert.equal('saved' in body, false, 'settings.json overrides are gone by design');
   });
 });

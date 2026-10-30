@@ -289,9 +289,12 @@ Generated media lives under `ACF_DATA_ROOT` (`/tmp` on Render):
 | `YOUTUBE_DEFAULT_LANGUAGE` | optional | Defaults to `en` |
 | `YOUTUBE_UPLOAD_SCOPE` | optional | Defaults to `https://www.googleapis.com/auth/youtube.upload` |
 
-`TELEGRAM_*`, `PIXABAY_API_KEY`, `IG_*`, `TIKTOK_AUTH_B64` and the `YOUTUBE_*` keys can also be
-entered on the dashboard's **Settings** page. They are stored in `/tmp/state/settings.json` for immediate
-use, but Render env vars always win and are the only permanent option.
+**All credentials are environment variables.** Nothing secret is ever written to disk:
+`TELEGRAM_*`, `PIXABAY_API_KEY`, `IG_*`, `TIKTOK_AUTH_B64`, the `YOUTUBE_*` keys and `YOUTUBE_API_KEY`
+must be set on the deployment (Render → **Environment** tab, or `.env` locally) and the process
+restarted. There is no `state/settings.json` any more — Render's disk is wiped on every deploy, so the
+dashboard's **Settings** page is read-only: it reports which variables the running process can see
+(green check / red cross) and the effective values from `config.json`.
 
 ---
 
@@ -640,8 +643,9 @@ On a laptop you can use project folders instead of `/tmp`:
 export ACF_DATA_ROOT="$PWD"         # downloads/, exports/, queue/, posted/, state/
 ```
 
-`config.json` holds defaults (slots, clip length, keyword list, hashtags). Dashboard changes are
-written to `state/settings.json` and override it.
+`config.json` holds defaults (slots, clip length, keyword list, hashtags) and is the only file-based
+override — edit it and redeploy. There is no `state/settings.json`: credentials and settings come
+from the environment, so nothing is lost when Render wipes `/tmp`.
 
 ---
 
@@ -681,7 +685,9 @@ written to `state/settings.json` and override it.
 | `/api/download` | GET | ZIP of the queue (or `?id=`) |
 | `/api/media/[id]` | GET | Range-capable MP4 (public, used by Instagram) |
 | `/api/thumb/[id]` | GET | 540×960 JPEG |
-| `/api/settings` | GET/PUT | Slots, platforms, tokens (write-only), runtime |
+| `/api/settings` | GET | Read-only config, environment-variable status, runtime (**PUT returns 403**) |
+| `/api/analytics` | GET/POST | Daily view points behind the dashboard chart |
+| `/api/analytics/refresh` | POST | Fold live YouTube view counts into today's chart point |
 | `/api/logs` | GET | JSONL log tail |
 
 ---

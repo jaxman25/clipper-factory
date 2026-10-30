@@ -326,9 +326,6 @@ def transcribe(audio: Path, job: Job) -> tuple[list[dict], str, float]:
 
     job.update(progress=22, message="Transcribing audio")
     try:
-        # VAD filter MUST be disabled: Rick Astley's track has loud music that
-        # triggers the VAD as "non-speech" and silently drops every segment.
-        # Faster-whisper returns 0 segments with vad_filter=True here.
         segment_iter, info = model.transcribe(
             str(audio),
             word_timestamps=True,
@@ -339,9 +336,9 @@ def transcribe(audio: Path, job: Job) -> tuple[list[dict], str, float]:
             # Greedy decoding keeps only one hypothesis alive (no beam search
             # scratch space) - much lighter on a 512 MB box.
             beam_size=1,
-            # VAD filter disabled: music content triggers false "non-speech"
-            # detection and silently drops segments without warning.
-            vad_filter=False,
+            # VAD filter enabled: silent stretches are skipped entirely, so
+            # they never reach the feature extractor and peak RAM stays down.
+            vad_filter=True,
             condition_on_previous_text=False,
         )
     except Exception as exc:
@@ -396,6 +393,86 @@ _ACTIVE_JOB_ID = ""  # published by run(); signal handlers cannot see run()'s lo
 
 # (seconds, platform, id tag) - the three transformative outputs per job.
 TRANSFORM_FORMATS = ((21, "TikTok", "t21"), (30, "Reels", "t30"), (59, "Shorts", "t59"))
+
+
+def _build_queue_item(
+    *,
+    clip_id: str,
+    job_id: str,
+    source_url: str,
+    source_title: str,
+    title: str,
+    hook: str,
+    caption: str,
+    transcript: str,
+    viral_score: float | None,
+    reasons: list[str],
+    start: float,
+    end: float,
+    mode: str,
+    scheduled: datetime,
+    clip_path: Path,
+    render_meta: dict,
+    meta: dict,
+    meta_source: str,
+    channel: str,
+    extras: dict | None = None,
+) -> dict:
+    """Build the queue JSON that every clip is written as.
+
+    The transform path and the viral/equal path used to spell this dict out
+    twice (34 and 29 keys). Only the four highlighted fields - title, caption,
+    viral_score, reasons - plus the per-job values differ between them, so
+    those are parameters and the shared fields are spelled out once here.
+    ``extras`` carries the transform-only keys (llm, voiceover, platform,
+    seconds, variants) that the viral/equal path does not emit.
+    """
+    item = {
+        "id": clip_id,
+        "job_id": job_id,
+        "source_url": source_url,
+        "source_title": source_title,
+        "title": title,
+        "hook": hook,
+        "caption": caption,
+        "transcript": transcript,
+        "viral_score": viral_score,
+        "reasons": reasons,
+        "start": start,
+        "end": end,
+        "duration": render_meta["duration"],
+        "width": render_meta["width"],
+        "height": render_meta["height"],
+        "face_detected": render_meta["face_detected"],
+        "file": f"{clip_id}.mp4",
+        "thumb": f"{clip_id}.jpg",
+        "export_path": str(clip_path),
+        "scheduled_for": scheduling.to_iso(scheduled),
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "posted_at": None,
+        "platforms": {},
+        "mode": mode,
+        "metadata_variants": meta,
+        "metadata_source": meta_source,
+        "original_channel": channel,
+        "attribution": transform.attribution_line(channel),
+        "speed": render_meta.get("speed"),
+    }
+    if extras:
+        item.update(extras)
+    return item
+
+
+def _persist_queue_item(item: dict, clip_path: Path, thumb_path: Path) -> None:
+    """Copy a rendered clip (and its thumbnail) into the queue and write its JSON.
+
+    This tail was spelled out at the end of both render paths; it lives here so
+    the queue's three files (mp4, jpg, json) can never drift apart again.
+    """
+    if thumb_path.exists():
+        shutil.copy2(thumb_path, paths.QUEUE / thumb_path.name)
+    shutil.copy2(clip_path, paths.QUEUE / f"{item['id']}.mp4")
+    common.write_json(paths.QUEUE / f"{item['id']}.json", item)
 
 
 def _render_transform(
@@ -540,46 +617,35 @@ def _render_transform(
         )
         slot = slots[idx] if idx < len(slots) else scheduling.next_slot(cfg)
         scheduled = scheduling.jitter(slot)
-        item = {
-            "id": clip_id,
-            "job_id": job_id,
-            "source_url": source_url,
-            "source_title": base_title,
-            "title": f"{base_title} ({seconds}s {platform})",
-            "hook": hook,
-            "caption": f"{hook} {hashtags}".strip(),
-            "transcript": script,
-            "viral_score": None,
-            "reasons": [f"transform:{llm_source}", f"voiceover:{seconds}s"],
-            "start": bed_start,
-            "end": win_end,
-            "duration": render_meta["duration"],
-            "width": render_meta["width"],
-            "height": render_meta["height"],
-            "face_detected": render_meta["face_detected"],
-            "file": f"{clip_id}.mp4",
-            "thumb": f"{clip_id}.jpg",
-            "export_path": str(clip_path),
-            "scheduled_for": scheduling.to_iso(scheduled),
-            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-            "posted_at": None,
-            "platforms": {},
-            "mode": mode,
-            "llm": llm_source,
-            "voiceover": "edge-tts",
-            "platform": tag,
-            "seconds": seconds,
-            "variants": variants,
-            "metadata_variants": meta,
-            "metadata_source": meta_source,
-            "original_channel": channel,
-            "attribution": transform.attribution_line(channel),
-            "speed": render_meta.get("speed"),
-        }
-        if thumb_path.exists():
-            shutil.copy2(thumb_path, paths.QUEUE / thumb_path.name)
-        shutil.copy2(clip_path, paths.QUEUE / f"{clip_id}.mp4")
-        common.write_json(paths.QUEUE / f"{clip_id}.json", item)
+        item = _build_queue_item(
+            clip_id=clip_id,
+            job_id=job_id,
+            source_url=source_url,
+            source_title=base_title,
+            title=f"{base_title} ({seconds}s {platform})",
+            hook=hook,
+            caption=f"{hook} {hashtags}".strip(),
+            transcript=script,
+            viral_score=None,
+            reasons=[f"transform:{llm_source}", f"voiceover:{seconds}s"],
+            start=bed_start,
+            end=win_end,
+            mode=mode,
+            scheduled=scheduled,
+            clip_path=clip_path,
+            render_meta=render_meta,
+            meta=meta,
+            meta_source=meta_source,
+            channel=channel,
+            extras={
+                "llm": llm_source,
+                "voiceover": "edge-tts",
+                "platform": tag,
+                "seconds": seconds,
+                "variants": variants,
+            },
+        )
+        _persist_queue_item(item, clip_path, thumb_path)
         queue_items.append(item)
 
     job.update(stage="render", progress=94, message="Transform renders complete")
@@ -918,41 +984,28 @@ def run(args: argparse.Namespace) -> int:
                 else scheduling.next_slot(cfg)
             )
             scheduled = scheduling.jitter(slot)
-            item = {
-                "id": clip_id,
-                "job_id": job_id,
-                "source_url": args.url or str(source),
-                "source_title": title,
-                "title": title,
-                "hook": hook,
-                "caption": viral.social_caption(candidate, hashtags) if mode == "viral" else transcript,
-                "transcript": transcript,
-                "viral_score": round(candidate.score, 1) if mode == "viral" else None,
-                "reasons": candidate.reasons if mode == "viral" else [],
-                "start": clip_start,
-                "end": clip_end,
-                "duration": render_meta["duration"],
-                "width": render_meta["width"],
-                "height": render_meta["height"],
-                "face_detected": render_meta["face_detected"],
-                "file": f"{clip_id}.mp4",
-                "thumb": f"{clip_id}.jpg",
-                "export_path": str(clip_path),
-                "scheduled_for": scheduling.to_iso(scheduled),
-                "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
-                "posted_at": None,
-                "platforms": {},
-                "mode": mode,
-                "metadata_variants": meta,
-                "metadata_source": meta_source,
-                "original_channel": channel,
-                "attribution": transform.attribution_line(channel),
-                "speed": render_meta.get("speed"),
-            }
-            if thumb_path.exists():
-                shutil.copy2(thumb_path, paths.QUEUE / thumb_path.name)
-            shutil.copy2(clip_path, paths.QUEUE / f"{clip_id}.mp4")
-            common.write_json(paths.QUEUE / f"{clip_id}.json", item)
+            item = _build_queue_item(
+                clip_id=clip_id,
+                job_id=job_id,
+                source_url=args.url or str(source),
+                source_title=title,
+                title=title,
+                hook=hook,
+                caption=viral.social_caption(candidate, hashtags) if mode == "viral" else transcript,
+                transcript=transcript,
+                viral_score=round(candidate.score, 1) if mode == "viral" else None,
+                reasons=candidate.reasons if mode == "viral" else [],
+                start=clip_start,
+                end=clip_end,
+                mode=mode,
+                scheduled=scheduled,
+                clip_path=clip_path,
+                render_meta=render_meta,
+                meta=meta,
+                meta_source=meta_source,
+                channel=channel,
+            )
+            _persist_queue_item(item, clip_path, thumb_path)
             queue_items.append(item)
 
         # Free disk on /tmp: drop the source once it is no longer needed.
@@ -970,8 +1023,8 @@ def run(args: argparse.Namespace) -> int:
         job.finish(queue_items, export_dir=str(job_dir))
 
         # Auto-post to YouTube Shorts if the user enabled it. The uploader
-        # reads its credentials from the same config.json / settings.json
-        # store as every other token in the dashboard.
+        # reads its credentials from the environment (YOUTUBE_* variables),
+        # the same way every other integration reads its token.
         if cfg.get("youtube_auto_post"):
             from . import youtube_uploader
             try:
@@ -982,6 +1035,9 @@ def run(args: argparse.Namespace) -> int:
                 )
                 if upload_ok.get("ok"):
                     common.info(f"YouTube upload succeeded: {upload_ok.get('video_id')}")
+                    # Same best-effort chart seed as the scheduler: one point
+                    # per posting date, deduped by date on the server.
+                    common.record_analytics_point(datetime.now().date().isoformat())
                     # Update the first clip's record so the dashboard can show
                     # the video ID next to it.  We keep it read-only-ish – the
                     # UI never trusts this value, it just displays it.

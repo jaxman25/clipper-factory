@@ -133,7 +133,7 @@ export function RestoreLogsButton() {
   );
 }
 
-export default function ActivityFeed({ limit = 8, pollMs = 15000 }) {
+export default function ActivityFeed({ limit = 8 }) {
   const [logs, setLogs] = useState([]);
   const [loaded, setLoaded] = useState(false);
 
@@ -154,9 +154,9 @@ export default function ActivityFeed({ limit = 8, pollMs = 15000 }) {
 
   useEffect(() => {
     load();
-    const timer = setInterval(load, pollMs);
+    const timer = setInterval(load, 15000);
     return () => clearInterval(timer);
-  }, [load, pollMs]);
+  }, [load]);
 
   useEffect(() => {
     function onLogsCleared() {

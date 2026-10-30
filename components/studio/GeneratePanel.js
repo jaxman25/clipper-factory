@@ -1,25 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { AlertCircle, Link2, Loader2, Sparkles, XCircle, Square } from 'lucide-react';
+import { AlertCircle, Link2, Loader2, Sparkles } from 'lucide-react';
 import { useStudio } from '@/components/studio/StudioProvider';
-
-function Switch({ checked, onChange, label }) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onChange(!checked)}
-      className={`relative h-6 w-11 shrink-0 rounded-full transition ${checked ? 'bg-brand' : 'bg-wash-strong'}`}
-    >
-      <span
-        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all ${checked ? 'left-[22px]' : 'left-0.5'}`}
-      />
-    </button>
-  );
-}
 
 function Progress({ job, onClear, onCancel, onCanceling }) {
   const running = job.status === 'running';
@@ -74,34 +57,12 @@ function Progress({ job, onClear, onCancel, onCanceling }) {
 }
 
 export default function GeneratePanel({ autoFocus = false }) {
-  const { config, job, setJob, startGeneration, notify, mode, setMode, applyConfig } = useStudio();
+  const { config, job, setJob, startGeneration, notify, mode, setMode } = useStudio();
   const [url, setUrl] = useState('');
   const [num, setNum] = useState(config?.shorts_per_video || 10);
   const [busy, setBusy] = useState(false);
   const [canceling, setCanceling] = useState(false);
-  const [youtubeAutoPost, setYoutubeAutoPost] = useState(Boolean(config?.youtube_auto_post));
   const running = job?.status === 'running';
-
-  async function saveYoutubeAutoPost(value) {
-    setYoutubeAutoPost(value);
-    try {
-      const response = await fetch('/api/settings', {
-        method: 'PUT',
-        cache: 'no-store',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ settings: { youtube_auto_post: value } }),
-      });
-      if (!response.ok) {
-        setYoutubeAutoPost(!value);
-        notify('Could not update auto-post setting');
-        return;
-      }
-      applyConfig({ youtube_auto_post: value });
-    } catch (err) {
-      setYoutubeAutoPost(!value);
-      notify(err.message);
-    }
-  }
 
   async function submit(event) {
     event.preventDefault();
@@ -235,17 +196,10 @@ export default function GeneratePanel({ autoFocus = false }) {
         </div>
 
         <div className="mt-4 flex flex-wrap items-center justify-between gap-4 rounded-lg bg-wash p-3">
-          <span className="text-xs text-muted">Auto-post</span>
-          <div className="flex flex-wrap items-center gap-3">
-            <Switch
-              checked={youtubeAutoPost}
-              onChange={saveYoutubeAutoPost}
-              label="Auto-post to YouTube Shorts"
-            />
-            <span className="text-xs text-muted">
-              {youtubeAutoPost ? 'On' : 'Off'}
-            </span>
-          </div>
+          <span className="text-xs text-muted">Auto-post to YouTube Shorts</span>
+          <span className="text-xs text-muted">
+            {config?.youtube_auto_post ? 'On' : 'Off'} · set in config.json
+          </span>
         </div>
 
         <p className="mt-4 text-[11px] text-subtle">

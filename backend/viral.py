@@ -47,13 +47,6 @@ class Word:
 
 
 @dataclass
-class Sentence:
-    start: float
-    end: float
-    text: str
-
-
-@dataclass
 class Segment:
     start: float
     end: float
@@ -116,15 +109,6 @@ def compute_rms(wav_path: str, bucket: float = 0.5) -> list[float]:
             return energies
     except (OSError, wave.Error):
         return []
-
-
-def _rms_at(rms: Sequence[float], start: float, end: float, bucket: float = 0.5) -> float:
-    if not rms:
-        return 0.0
-    lo = max(0, int(start / bucket))
-    hi = min(len(rms), max(lo + 1, int(end / bucket)))
-    window = rms[lo:hi]
-    return sum(window) / len(window) if window else 0.0
 
 
 def _audio_spike(rms: Sequence[float], start: float, end: float) -> float:

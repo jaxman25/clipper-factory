@@ -3,7 +3,7 @@
 Uses google-api-python-client + google-auth-oauthlib with a offline
 refresh token (or service account) to upload a video to YouTube as a Short.
 
-Config (from ``config.json``, ``settings.json`` tokens, or env vars):
+Config (environment variables only - no file is written or read):
 
     YOUTUBE_CLIENT_ID     - OAuth2 client ID (or Service Account JSON string)
     YOUTUBE_CLIENT_SECRET - OAuth2 client secret
@@ -50,33 +50,14 @@ except ImportError:
 # is not enough to upload.
 YOUTUBE_UPLOAD_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
 
-# YouTube token keys mirror the dashboard's TOKEN_KEYS (see lib/store.js)
-YOUTUBE_TOKEN_KEYS = [
-    "YOUTUBE_CLIENT_ID",
-    "YOUTUBE_CLIENT_SECRET",
-    "YOUTUBE_REFRESH_TOKEN",
-    "YOUTUBE_SERVICE_ACCOUNT",
-]
-
-
 def load_youtube_config() -> dict[str, str]:
-    """Load YouTube credentials from the same places as the other tokens."""
-    cfg = common.load_config()
-    tokens = cfg.get("tokens") or {}
-    env = {
+    """Load YouTube credentials from the environment (nothing is stored on disk)."""
+    return {
         "client_id": os.getenv("YOUTUBE_CLIENT_ID", ""),
         "client_secret": os.getenv("YOUTUBE_CLIENT_SECRET", ""),
         "refresh_token": os.getenv("YOUTUBE_REFRESH_TOKEN", ""),
         "service_account": os.getenv("YOUTUBE_SERVICE_ACCOUNT", ""),
     }
-
-    # Priority: env > config.json > settings.json (tokens)
-    for key in env:
-        if env[key]:
-            continue
-        env[key] = tokens.get(key, "")
-
-    return env
 
 
 def _build_credentials(config: dict[str, str]):

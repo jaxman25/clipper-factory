@@ -32,7 +32,6 @@ BROLL_DIR = ASSETS / "broll"
 WATERMARK = ASSETS / "logos" / "watermark-100.png"
 
 CONFIG_FILE = ROOT / "config.json"
-SETTINGS_FILE = STATE / "settings.json"
 SCHEDULE_FILE = STATE / "schedule.json"
 LOG_FILE = STATE / "logs.jsonl"
 LOCK_FILE = STATE / "generate.lock"
@@ -48,7 +47,3 @@ def ensure_dirs() -> None:
 def safe_id(value: str, fallback: str = "clip") -> str:
     cleaned = re.sub(r"[^A-Za-z0-9_-]+", "-", value).strip("-").lower()
     return cleaned[:60] or fallback
-
-
-def rel(path: Path) -> str:
-    return str(path).replace("\\", "/")

@@ -237,38 +237,6 @@ def build_ass(
     return ASS_HEADER.format(primary=hex_to_ass(primary_color)) + "\n".join(events) + "\n"
 
 
-def _split_highlighted_card(
-    card_start: float,
-    card_end: float,
-    card_text: str,
-    tags: list[str],
-    base_text: str,
-    highlight_words: Sequence[str] | None,
-) -> list[tuple[float, float, str, str]]:
-    """Rebuild a card as a list of (start, end, text, style) chunks.
-
-    Each chunk is either a plain word (Caption style) or a highlighted
-    word (CaptionHighlight or CaptionHighlightReverse style).  We split
-    on word boundaries so each chunk is a contiguous run of words that
-    either all contain highlight tags or none do.
-    """
-    if not highlight_words:
-        return [(card_start, card_end, base_text, "Caption")]
-
-    # Build a word-level map: word index -> "highlighted" or "plain".
-    plan: list[tuple[float, float, str, str]] = []
-    words = re.split(r"\s+", base_text.strip())
-    for wi, word in enumerate(words):
-        is_highlight = any(
-            _is_highlight_word(word, highlight_words) for word in tags
-        )
-        style = "CaptionHighlightReverse" if is_highlight else "Caption"
-        # Each word keeps its offset relative to the card start; the
-        # actual timing is applied by the renderer from the ASS timings.
-        plan.append((card_start, card_end, word, style))
-    return plan
-
-
 def _emit_highlighted_card(
     card_start: float,
     card_end: float,

@@ -97,11 +97,3 @@ def send_document(path: Path | str, caption: str = "", chat: str | None = None) 
         )
 
 
-def pin_message(message_id: int, chat: str | None = None) -> bool:
-    target = chat_id(chat)
-    if not target:
-        return False
-    return _post(
-        "pinChatMessage",
-        {"chat_id": target, "message_id": message_id, "disable_notification": "true"},
-    )

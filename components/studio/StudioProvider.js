@@ -98,29 +98,71 @@ export function StudioProvider({ children }) {
     refreshJobs();
   }, [pathname, refresh, refreshJobs]);
 
-  // Write confirmed settings straight into shared state so every consumer
-  // (overview header, posting calendar, generate panel) updates instantly,
-  // without waiting for the next poll or another GET round-trip.
-  const applyConfig = useCallback((patch = {}) => {
-    setData((current) => ({
-      ...current,
-      config: {
-        ...current.config,
-        ...patch,
-        ...(patch.platforms
-          ? { platforms: { ...current.config?.platforms, ...patch.platforms } }
-          : null),
-      },
-    }));
-    setHealth((current) => {
-      if (!current) return current;
-      const next = { ...current };
-      if (patch.posting_times !== undefined) next.posting_times = patch.posting_times;
-      if (patch.timezone !== undefined) next.timezone = patch.timezone;
-      if (patch.youtube_auto_post !== undefined) next.youtube_auto_post = patch.youtube_auto_post;
-      return next;
-    });
-  }, []);
+  // Analytics starts empty: state/analytics.json is only written when a point
+  // arrives, and before this nothing ever sent one, so the chart could never
+  // render. On the first load that finds posted clips but no points, seed one
+  // point per posting date (read from the clips' own posted_at/created_at) so
+  // the x-axis carries real dates. Views stay 0 on purpose - stuffing the clip
+  // count into `views` would fabricate the earnings estimate ($0.50/1k). One
+  // seed per mount; the API also dedupes by date, so re-runs are harmless.
+  const seededAnalytics = useRef(false);
+  useEffect(() => {
+    if (seededAnalytics.current) return;
+    const points = analyticsFeed?.points;
+    const postedClips = data.posted || [];
+    if (!Array.isArray(points) || points.length || !postedClips.length) return;
+    seededAnalytics.current = true;
+    const dates = [
+      ...new Set(
+        postedClips
+          .map((clip) => String(clip.posted_at || clip.created_at || '').slice(0, 10))
+          .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date))
+      ),
+    ]
+      .sort()
+      .slice(-30); // the chart shows the last 30 days
+    if (!dates.length) return;
+    Promise.all(
+      dates.map((date) =>
+        fetch('/api/analytics', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ date, views: 0 }),
+        }).then((response) => (response.ok ? response.json() : null))
+      )
+    )
+      .then((payloads) => {
+        const latest = payloads.filter(Boolean).pop();
+        if (latest) setAnalyticsFeed(latest); // chart updates without waiting for the next poll
+      })
+      .catch(() => {
+        /* the next refresh retries the read */
+      });
+  }, [analyticsFeed, data.posted]);
+
+  // Pull live YouTube view counts once per load and fold the increase into
+  // today's point, so the chart shows real numbers instead of seeded zeroes.
+  // Missing API key, cold API or no YouTube clips: the route answers with a
+  // reason and we simply keep what we have.
+  const refreshedViews = useRef(false);
+  useEffect(() => {
+    if (refreshedViews.current || !analyticsFeed) return;
+    refreshedViews.current = true;
+    fetch('/api/analytics/refresh', { method: 'POST', cache: 'no-store' })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((payload) => {
+        if (payload?.ok && Array.isArray(payload.points)) {
+          setAnalyticsFeed({
+            points: payload.points,
+            total_views: payload.total_views,
+            estimated_earnings: payload.total_views / 1000 * 0.5,
+          });
+        }
+      })
+      .catch(() => {
+        /* the next load retries */
+      });
+  }, [analyticsFeed]);
 
   useEffect(() => {
     if (job?.status !== 'running') return undefined;
@@ -232,7 +274,6 @@ export function StudioProvider({ children }) {
         setJob,
         refresh,
         refreshJobs,
-        applyConfig,
         startGeneration,
         reschedule,
         notify,
@@ -240,7 +281,7 @@ export function StudioProvider({ children }) {
         setMode,
       };
     },
-    [data, clips, posted, avgScore, health, settings, analyticsFeed, loading, job, jobs, refresh, refreshJobs, applyConfig, startGeneration, reschedule, notify, mode]
+    [data, clips, posted, avgScore, health, settings, analyticsFeed, loading, job, jobs, refresh, refreshJobs, startGeneration, reschedule, notify, mode]
   );
 
   return (

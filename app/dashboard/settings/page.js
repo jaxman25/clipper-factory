@@ -1,13 +1,17 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Check, KeyRound, Loader2, Save, Trash2 } from 'lucide-react';
+import { Check, X } from 'lucide-react';
 import ActivityFeed, { ClearLogsButton, RestoreLogsButton } from '@/components/studio/ActivityFeed';
 import { PageHeader, SectionCard } from '@/components/studio/ui';
-import { useStudio } from '@/components/studio/StudioProvider';
 import { cn } from '@/lib/cn';
 
-const TOKEN_FIELDS = [
+/**
+ * Credentials are environment-only (Render / .env), so this page reports
+ * whether the running process can see each variable instead of offering
+ * inputs that could not be persisted anywhere durable.
+ */
+const ENV_FIELDS = [
   { key: 'TELEGRAM_BOT_TOKEN', label: 'Telegram bot token', hint: 'From @BotFather' },
   { key: 'TELEGRAM_CHAT_ID', label: 'Telegram chat id', hint: 'Send /start to the bot to see it' },
   { key: 'PIXABAY_API_KEY', label: 'Pixabay API key', hint: 'Free at pixabay.com/api/docs' },
@@ -17,62 +21,27 @@ const TOKEN_FIELDS = [
   { key: 'YOUTUBE_CLIENT_ID', label: 'YouTube client ID', hint: 'From Google Cloud Console (OAuth2)' },
   { key: 'YOUTUBE_CLIENT_SECRET', label: 'YouTube client secret', hint: 'From Google Cloud Console' },
   { key: 'YOUTUBE_REFRESH_TOKEN', label: 'YouTube refresh token', hint: 'From OAuth2 playground or auth flow' },
+  { key: 'YOUTUBE_API_KEY', label: 'YouTube Data API key', hint: 'Live view counts for the analytics chart' },
 ];
 
-function Switch({ checked, onChange, label }) {
+function Row({ label, value }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onChange(!checked)}
-      className={cn(
-        'relative h-6 w-11 shrink-0 rounded-full transition',
-        checked ? 'bg-brand' : 'bg-wash-strong'
-      )}
-    >
-      <span
-        className={cn(
-          'absolute top-0.5 h-5 w-5 rounded-full bg-white transition-all',
-          checked ? 'left-[22px]' : 'left-0.5'
-        )}
-      />
-    </button>
+    <div className="flex items-center justify-between gap-3">
+      <dt className="shrink-0 text-subtle">{label}</dt>
+      <dd className="truncate text-right font-mono text-[11px] text-fg/80">{String(value)}</dd>
+    </div>
   );
 }
 
 export default function SettingsPage() {
-  const { applyConfig, refresh } = useStudio();
   const [data, setData] = useState(null);
-  const [form, setForm] = useState(null);
-  const [tokenValues, setTokenValues] = useState({});
   const [note, setNote] = useState(null);
-  const [busy, setBusy] = useState('');
 
   const load = useCallback(async () => {
     try {
       const response = await fetch('/api/settings', { cache: 'no-store' });
       if (!response.ok) throw new Error('Could not load settings');
-      const payload = await response.json();
-      setData(payload);
-      setForm((current) =>
-        current || {
-          posting_times: (payload.config.posting_times || []).join(', '),
-          timezone: payload.config.timezone || 'Africa/Nairobi',
-          shorts_per_video: payload.config.shorts_per_video ?? 10,
-          clip_min_seconds: payload.config.clip_min_seconds ?? 30,
-          clip_max_seconds: payload.config.clip_max_seconds ?? 45,
-          playback_speed: payload.config.playback_speed ?? 1.1,
-          drum_volume_db: payload.config.drum_volume_db ?? -22,
-          outro_text: payload.config.outro_text || '',
-          hashtags: payload.config.hashtags || '',
-          caption_color: payload.config.caption_color || '#FFD700',
-          caption_words_per_card: payload.config.caption_words_per_card ?? 3,
-          instagram: Boolean(payload.config.platforms?.instagram),
-          tiktok: Boolean(payload.config.platforms?.tiktok),
-        }
-      );
+      setData(await response.json());
     } catch (err) {
       setNote({ kind: 'error', text: err.message });
     }
@@ -81,119 +50,15 @@ export default function SettingsPage() {
   useEffect(() => {
     load();
   }, [load]);
-  function update(field, value) {
-    setForm((current) => ({ ...current, [field]: value }));
-  }
 
-  async function saveSettings(event) {
-    event.preventDefault();
-    if (!form) return;
-    setBusy('settings');
-    setNote(null);
-    try {
-      const response = await fetch('/api/settings', {
-        method: 'PUT',
-        cache: 'no-store',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          settings: {
-            posting_times: form.posting_times,
-            timezone: form.timezone,
-            shorts_per_video: Number(form.shorts_per_video),
-            clip_min_seconds: Number(form.clip_min_seconds),
-            clip_max_seconds: Number(form.clip_max_seconds),
-            playback_speed: Number(form.playback_speed),
-            drum_volume_db: Number(form.drum_volume_db),
-            caption_words_per_card: Number(form.caption_words_per_card),
-            outro_text: form.outro_text,
-            hashtags: form.hashtags,
-            caption_color: form.caption_color,
-            platforms: { instagram: form.instagram, tiktok: form.tiktok },
-          },
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || 'Could not save settings');
-      // Push the confirmed values into shared state and re-pull queue/health so
-      // the overview, calendar and generate panel are already current when the
-      // user navigates back — no waiting for the 20s poll.
-      applyConfig(payload.saved || {});
-      await refresh();
-      setNote({ kind: 'ok', text: 'Settings saved — new runs and the scheduler pick them up immediately.' });
-      setData((current) =>
-        current ? { ...current, config: { ...current.config, ...payload.saved } } : current
-      );
-    } catch (err) {
-      setNote({ kind: 'error', text: err.message });
-    } finally {
-      setBusy('');
-    }
-  }
-
-  async function saveToken(key) {
-    const value = (tokenValues[key] || '').trim();
-    if (!value) {
-      setNote({ kind: 'error', text: 'Paste a value before saving' });
-      return;
-    }
-    setBusy(key);
-    setNote(null);
-    try {
-      const response = await fetch('/api/settings', {
-        method: 'PUT',
-        cache: 'no-store',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tokens: { [key]: value } }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || 'Could not save token');
-      setData((current) => (current ? { ...current, tokens: payload.tokens } : current));
-      setTokenValues((current) => ({ ...current, [key]: '' }));
-      await refresh();
-      setNote({ kind: 'ok', text: `${key} saved. Restart the bot to change its own polling token.` });
-    } catch (err) {
-      setNote({ kind: 'error', text: err.message });
-    } finally {
-      setBusy('');
-    }
-  }
-
-  async function clearToken(key) {
-    setBusy(key);
-    setNote(null);
-    try {
-      const response = await fetch('/api/settings', {
-        method: 'PUT',
-        cache: 'no-store',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ clearTokens: [key] }),
-      });
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || 'Could not clear token');
-      setData((current) => (current ? { ...current, tokens: payload.tokens } : current));
-      await refresh();
-      setNote({ kind: 'ok', text: `${key} cleared from dashboard settings.` });
-    } catch (err) {
-      setNote({ kind: 'error', text: err.message });
-    } finally {
-      setBusy('');
-    }
-  }
-
-  const saving = busy === 'settings';
+  const config = data?.config || null;
 
   return (
     <div className="space-y-6">
       <PageHeader
         eyebrow="Configuration"
         title="Auto-post settings"
-        description="Slots, render defaults and platform tokens. Env vars from Render always win over values saved here."
-        actions={
-          <button type="submit" form="settings-form" disabled={!form || saving} className="btn btn-primary btn-sm">
-            {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
-            {saving ? 'Saving…' : 'Save changes'}
-          </button>
-        }
+        description="Read-only: slots and render defaults come from config.json, credentials from the environment variables set on this deployment."
       />
 
       {note && (
@@ -209,122 +74,42 @@ export default function SettingsPage() {
         </p>
       )}
 
-      {!form ? (
+      {!config ? (
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="card h-64 animate-pulse" />
           <div className="card h-64 animate-pulse" />
         </div>
       ) : (
-        <form id="settings-form" onSubmit={saveSettings} className="grid gap-4 lg:grid-cols-2">
+        <div className="grid gap-4 lg:grid-cols-2">
           <SectionCard
             title="Posting schedule"
-            description="Two slots a day keeps the queue flowing — 10 shorts ≈ 5 days."
+            description="Two slots a day keeps the queue flowing — edit config.json and redeploy."
           >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <label htmlFor="posting-times" className="label">
-                  Posting times
-                </label>
-                <input
-                  id="posting-times"
-                  type="text"
-                  value={form.posting_times}
-                  onChange={(event) => update('posting_times', event.target.value)}
-                  placeholder="19:00, 21:00"
-                  className="input mt-1.5"
-                />
-              </div>
-              <div>
-                <label htmlFor="timezone" className="label">
-                  Time zone
-                </label>
-                <input
-                  id="timezone"
-                  type="text"
-                  value={form.timezone}
-                  onChange={(event) => update('timezone', event.target.value)}
-                  placeholder="Africa/Nairobi"
-                  className="input mt-1.5"
-                />
-              </div>
-            </div>
+            <dl className="space-y-2.5 text-[12px]">
+              <Row label="Posting times" value={(config.posting_times || []).join(' · ')} />
+              <Row label="Time zone" value={config.timezone || '—'} />
+            </dl>
           </SectionCard>
 
           <SectionCard title="Render defaults" description="Applied to every new clip run">
-            <div className="grid gap-4 sm:grid-cols-2">
-              {[
-                ['shorts_per_video', 'Shorts per video', '1–20'],
-                ['clip_min_seconds', 'Min clip seconds', 'seconds'],
-                ['clip_max_seconds', 'Max clip seconds', 'seconds'],
-                ['playback_speed', 'Playback speed', '1.0–1.5'],
-                ['drum_volume_db', 'Drum volume', 'dB'],
-                ['caption_words_per_card', 'Words per caption', '2–3'],
-              ].map(([key, label, hint]) => (
-                <div key={key}>
-                  <label htmlFor={key} className="label">
-                    {label}
-                  </label>
-                  <input
-                    id={key}
-                    type="number"
-                    step="0.1"
-                    value={form[key] ?? ''}
-                    onChange={(event) => update(key, event.target.value)}
-                    className="input mt-1.5 tabular-nums"
-                  />
-                  <p className="mt-1 text-[10px] text-subtle/80">{hint}</p>
-                </div>
-              ))}
-            </div>
+            <dl className="space-y-2.5 text-[12px]">
+              <Row label="Shorts per video" value={config.shorts_per_video ?? '—'} />
+              <Row label="Min clip seconds" value={config.clip_min_seconds ?? '—'} />
+              <Row label="Max clip seconds" value={config.clip_max_seconds ?? '—'} />
+              <Row label="Playback speed" value={config.playback_speed ?? '—'} />
+              <Row label="Drum volume" value={`${config.drum_volume_db ?? '—'} dB`} />
+              <Row label="Words per caption" value={config.caption_words_per_card ?? '—'} />
+            </dl>
           </SectionCard>
 
           <SectionCard title="Captions & copy" description="Burned into the video and used in the publish payload">
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="outro_text" className="label">
-                  Outro text
-                </label>
-                <input
-                  id="outro_text"
-                  type="text"
-                  value={form.outro_text}
-                  onChange={(event) => update('outro_text', event.target.value)}
-                  className="input mt-1.5"
-                />
-              </div>
-              <div>
-                <label htmlFor="hashtags" className="label">
-                  Hashtags
-                </label>
-                <input
-                  id="hashtags"
-                  type="text"
-                  value={form.hashtags}
-                  onChange={(event) => update('hashtags', event.target.value)}
-                  className="input mt-1.5"
-                />
-              </div>
-              <div>
-                <label htmlFor="caption_color" className="label">
-                  Caption colour
-                </label>
-                <div className="mt-1.5 flex items-center gap-2">
-                  <input
-                    id="caption_color"
-                    type="color"
-                    value={form.caption_color}
-                    onChange={(event) => update('caption_color', event.target.value)}
-                    className="h-10 w-12 cursor-pointer rounded-lg border border-line bg-transparent"
-                  />
-                  <input
-                    type="text"
-                    value={form.caption_color}
-                    onChange={(event) => update('caption_color', event.target.value)}
-                    className="input"
-                  />
-                </div>
-              </div>
-            </div>
+            <dl className="space-y-2.5 text-[12px]">
+              <Row label="Outro text" value={config.outro_text || '—'} />
+              <Row label="Hashtags" value={config.hashtags || '—'} />
+              <Row label="Caption colour" value={config.caption_color || '—'} />
+              <Row label="Hook seconds" value={config.hook_seconds ?? '—'} />
+              <Row label="Outro seconds" value={config.outro_seconds ?? '—'} />
+            </dl>
           </SectionCard>
 
           <SectionCard title="Platforms" description="Where the scheduler publishes each clip">
@@ -332,86 +117,60 @@ export default function SettingsPage() {
               {[
                 ['instagram', 'Instagram Reels', 'Meta Graph API business account'],
                 ['tiktok', 'TikTok', 'Playwright session upload'],
-              ].map(([key, label, hint]) => (
-                <div
-                  key={key}
-                  className="flex items-center justify-between gap-4 rounded-lg border border-line bg-wash px-3.5 py-3"
-                >
-                  <div>
-                    <p className="text-[13px] font-medium">{label}</p>
-                    <p className="mt-0.5 text-[11px] text-subtle">{hint}</p>
+                ['youtube_auto_post', 'YouTube Shorts', 'OAuth2 upload right after a render'],
+              ].map(([key, label, hint]) => {
+                const enabled = Boolean(config.platforms?.[key] ?? config[key]);
+                return (
+                  <div
+                    key={key}
+                    className="flex items-center justify-between gap-4 rounded-lg border border-line bg-wash px-3.5 py-3"
+                  >
+                    <div className="min-w-0">
+                      <p className="text-[13px] font-medium">{label}</p>
+                      <p className="mt-0.5 text-[11px] text-subtle">{hint}</p>
+                    </div>
+                    <span
+                      className={cn(
+                        'pill shrink-0',
+                        enabled ? 'border-ok/30 text-ok' : 'border-danger/30 text-danger'
+                      )}
+                    >
+                      {enabled ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                      {enabled ? 'on' : 'off'}
+                    </span>
                   </div>
-                  <Switch
-                    checked={Boolean(form[key])}
-                    onChange={(value) => update(key, value)}
-                    label={`Enable ${label}`}
-                  />
-                </div>
-              ))}
+                );
+              })}
             </div>
-            <button type="submit" disabled={saving} className="btn btn-primary btn-sm mt-4 w-full">
-              {saving ? 'Saving…' : 'Save changes'}
-            </button>
           </SectionCard>
-        </form>
+        </div>
       )}
 
       <SectionCard
-        title="Integrations"
-        description="Tokens are stored on this instance and are write-only in the UI."
+        title="Environment variables"
+        description="Credentials are never written to disk — set them as environment variables (Render dashboard or .env) and restart."
       >
         <div className="grid gap-3 sm:grid-cols-2">
-          {TOKEN_FIELDS.map((field) => {
-            const status = data?.tokens?.[field.key];
-            const configured = Boolean(status?.configured);
+          {ENV_FIELDS.map((field) => {
+            const configured = Boolean(data?.tokens?.[field.key]?.configured);
             return (
               <div key={field.key} className="rounded-lg border border-line bg-wash p-3.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <p className="text-[13px] font-medium">{field.label}</p>
-                    <p className="mt-0.5 text-[11px] text-subtle">{field.hint}</p>
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-mono text-[12px] font-medium">{field.key}</p>
+                    <p className="mt-0.5 text-[11px] text-subtle">{field.label}</p>
+                    <p className="mt-0.5 text-[10px] text-subtle/80">{field.hint}</p>
                   </div>
                   <span
                     className={cn(
                       'pill shrink-0',
-                      configured ? 'border-ok/30 text-ok' : 'text-subtle'
+                      configured ? 'border-ok/30 text-ok' : 'border-danger/30 text-danger'
                     )}
+                    title={configured ? 'Visible to the running process' : 'Not present in the environment'}
                   >
-                    {configured ? <Check className="h-3 w-3" /> : <KeyRound className="h-3 w-3" />}
-                    {configured ? status.hint || 'set' : 'not set'}
+                    {configured ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                    {configured ? 'set' : 'missing'}
                   </span>
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    value={tokenValues[field.key] || ''}
-                    onChange={(event) =>
-                      setTokenValues((current) => ({ ...current, [field.key]: event.target.value }))
-                    }
-                    placeholder="paste value"
-                    className="input"
-                    aria-label={field.label}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => saveToken(field.key)}
-                    disabled={busy === field.key}
-                    className="btn btn-sm shrink-0"
-                  >
-                    Save
-                  </button>
-                  {configured && (
-                    <button
-                      type="button"
-                      onClick={() => clearToken(field.key)}
-                      disabled={busy === field.key}
-                      aria-label={`Clear ${field.label}`}
-                      className="btn btn-sm shrink-0 text-danger"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
                 </div>
               </div>
             );

@@ -44,8 +44,6 @@ function clearDirectory(name) {
 }
 
 export async function POST(request) {
-  // Debug: log the exact raw body the frontend sent, so we can see why the
-  // confirmation check rejected it.
   let raw;
   try {
     raw = await request.text();
@@ -53,13 +51,10 @@ export async function POST(request) {
     console.error('[RESET] request.text() threw:', err.message);
     return Response.json({ ok: false, error: 'Failed to read request body' }, { status: 400 });
   }
-  console.log('[RESET] raw body received:', raw);
-  console.log('[RESET] raw body (lower):', raw.trim().toLowerCase());
 
   let parsed;
   try {
     parsed = JSON.parse(raw.trim());
-    console.log('[RESET] parsed JSON:', parsed);
   } catch (err) {
     console.error('[RESET] JSON.parse failed:', err.message);
     return Response.json(
@@ -68,12 +63,9 @@ export async function POST(request) {
     );
   }
 
-  // The confirmation must be an explicit boolean true (or the string "true").
-  if (typeof parsed.confirm !== 'boolean' || parsed.confirm !== true) {
-    console.warn(
-      '[RESET] confirmation check failed: confirm =', parsed.confirm,
-      '(type:', typeof parsed.confirm, ')'
-    );
+  // Only the literal boolean true confirms: "true", 1 or yes-ish strings all
+  // fail, which is what the hint below tells the caller to send.
+  if (parsed.confirm !== true) {
     return Response.json(
       {
         ok: false,

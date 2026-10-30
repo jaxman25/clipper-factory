@@ -240,6 +240,9 @@ def run_slot(
         common.write_json(paths.QUEUE / f"{item['id']}.json", item)
         _move_to_posted(item)
         _mark_slot(slot, str(item.get("id")))
+        # Seed the dashboard chart with today's posting date. Views stay 0
+        # until a real view-count source exists; best effort, never fails a post.
+        common.record_analytics_point(now.date().isoformat())
         if notify:
             telegram.send_message(
                 f"✅ Posted “{item.get('title') or item.get('id')}”\n"
@@ -268,10 +271,6 @@ def run_slot(
         _notify_with_file(item, reason)
     return {"posted": False, "clip": item.get("id"), "platforms": results, "reason": reason,
             "attempts": attempts}
-
-
-def post_specific(clip_id: str, *, notify: bool = True) -> dict[str, Any]:
-    return run_slot("manual", force=True, clip_id=clip_id, notify=notify)
 
 
 # --------------------------------------------------------------- scheduling

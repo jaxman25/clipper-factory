@@ -1,6 +1,7 @@
 """Configuration loading (config.json + dashboard overrides) and logging."""
 from __future__ import annotations
 
+import base64
 import json
 import os
 import sys
@@ -25,15 +26,6 @@ try:
     load_dotenv(paths.ROOT / ".env")
 except ImportError:  # pragma: no cover
     pass
-
-TOKEN_KEYS = (
-    "TELEGRAM_BOT_TOKEN",
-    "TELEGRAM_CHAT_ID",
-    "PIXABAY_API_KEY",
-    "IG_USER_ID",
-    "IG_ACCESS_TOKEN",
-    "TIKTOK_AUTH_B64",
-)
 
 DEFAULTS: dict[str, Any] = {
     "timezone": "Africa/Nairobi",
@@ -176,34 +168,18 @@ def remove_lock_if_owned(
         return False
 
 
-def apply_env_overrides() -> None:
-    """Let tokens saved from the dashboard reach this process and its children."""
-    tokens = _read_json(paths.SETTINGS_FILE).get("tokens")
-    if not isinstance(tokens, dict):
-        return
-    for key in TOKEN_KEYS:
-        value = tokens.get(key)
-        if value and not os.environ.get(key):
-            os.environ[key] = str(value)
-
-
 def load_config() -> dict[str, Any]:
-    apply_env_overrides()
+    """Non-secret configuration: committed defaults overridden by config.json.
+
+    Credentials never come from a file. Render's disk is wiped on every deploy,
+    so every consumer reads its tokens straight from the environment
+    (``os.getenv``) - there is no settings.json override any more.
+    """
     cfg = dict(DEFAULTS)
     cfg.update(_read_json(paths.CONFIG_FILE))
-    cfg.update(_read_json(paths.SETTINGS_FILE))
-    cfg.pop("tokens", None)
     if not cfg.get("posting_times"):
         cfg["posting_times"] = DEFAULTS["posting_times"]
     return cfg
-
-
-def save_settings(updates: dict[str, Any]) -> dict[str, Any]:
-    current = _read_json(paths.SETTINGS_FILE)
-    current.update(updates)
-    paths.STATE.mkdir(parents=True, exist_ok=True)
-    write_json(paths.SETTINGS_FILE, current)
-    return load_config()
 
 
 def log(level: str, message: str, **fields: Any) -> None:
@@ -235,6 +211,46 @@ def warn(message: str, **fields: Any) -> None:
 
 def error(message: str, **fields: Any) -> None:
     log("error", message, **fields)
+
+
+def record_analytics_point(date: str, views: int = 0) -> bool:
+    """Best-effort: record one day's point on ``POST /api/analytics``.
+
+    The dashboard chart reads ``state/analytics.json``, which only the Next.js
+    route writes, so the posting code has to hand its point over HTTP once a
+    day after a successful post. Same rule as logging: analytics must never
+    break a post, so every failure is swallowed and reported as a warning.
+    """
+    base = (
+        os.getenv("PUBLIC_BASE_URL")
+        or os.getenv("RENDER_EXTERNAL_URL")
+        or "http://localhost:3000"
+    ).rstrip("/")
+    headers = {"Content-Type": "application/json"}
+    user = os.getenv("DASHBOARD_USER")
+    password = os.getenv("DASHBOARD_PASSWORD")
+    if user and password:
+        # The middleware challenges every route except health/auth/media/thumb,
+        # so a server-to-server call has to present the dashboard credentials.
+        token = base64.b64encode(f"{user}:{password}".encode("utf-8")).decode("ascii")
+        headers["Authorization"] = f"Basic {token}"
+    try:
+        import requests
+
+        response = requests.post(
+            f"{base}/api/analytics",
+            json={"date": date, "views": int(views or 0)},
+            headers=headers,
+            timeout=5,
+        )
+        if response.status_code >= 400:
+            warn(f"Analytics point for {date} rejected: HTTP {response.status_code}")
+            return False
+        info(f"Analytics point recorded for {date}")
+        return True
+    except Exception as exc:  # never let analytics break the posting flow
+        warn(f"Analytics point for {date} not recorded: {exc}")
+        return False
 
 
 def clear_logs() -> dict[str, int]:

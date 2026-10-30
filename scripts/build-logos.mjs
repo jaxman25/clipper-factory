@@ -262,8 +262,6 @@ await writeFile(path.join(OUT, 'favicon.ico'), ico([{ size: 32, data: fav32 }, {
 await mkdir(PUBLIC, { recursive: true });
 await mkdir(PUBLIC_LOGOS, { recursive: true });
 for (const [from, to] of [
-  ['icon.svg', 'icon.svg'],
-  ['icon-256.png', 'icon-256.png'],
   ['favicon.ico', 'favicon.ico'],
   ['icon-1024.png', path.join('assets', 'logos', 'icon-1024.png')],
   ['icon.svg', path.join('assets', 'logos', 'icon.svg')],

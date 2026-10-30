@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { CalendarClock, Download, Loader2, Pencil, Save, Send, Sparkles, X, DollarSign, TrendingUp, Eye } from 'lucide-react';
+import { CalendarClock, Download, Loader2, Pencil, Save, Send, Sparkles, X, DollarSign, TrendingUp } from 'lucide-react';
 import { useStudio } from '@/components/studio/StudioProvider';
 import { dayKeyInTZ, formatInTZ, timeInTZ, zonedToIso } from '@/lib/time';
 import { cn } from '@/lib/cn';
