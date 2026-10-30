@@ -51,3 +51,38 @@ export async function PATCH(request) {
   if (!updated) return Response.json({ error: 'clip not found in queue' }, { status: 404 });
   return Response.json({ ok: true, state: updated.state, clip: updated.item });
 }
+
+// Legacy wrapper: callers that still POST to /api/clips (e.g. the old
+// edit wiring in ClipCard.js) are forwarded to the dedicated edit endpoint.
+// The real editor lives at /api/clips/edit and expects { clip_id, new_start, new_end }.
+export async function POST(request) {
+  let body;
+  try {
+    body = await request.json();
+  } catch (err) {
+    return Response.json({ error: 'invalid JSON body' }, { status: 400 });
+  }
+  if (body && (body.clip_id != null || body.new_start != null || body.new_end != null)) {
+    const editReq = new Request(new URL('/api/clips/edit', request.url), {
+      method: 'POST',
+      headers: { 'Content-Type': request.headers.get('Content-Type') || 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return POST_edit(editReq);
+  }
+  return Response.json({ error: 'POST /api/clips is not supported; use /api/clips/edit for clip edits' }, { status: 404 });
+}
+
+// Keep the name out of the module export surface so it can be called internally.
+async function POST_edit(request) {
+  // Re-export the real handler by calling the route module directly is not
+  // possible in Next.js route handlers — forward with a server-side fetch
+  // to the same origin so the edit logic runs in-process.
+  const internal = new URL('/api/clips/edit', request.url);
+  const response = await fetch(internal, {
+    method: request.method,
+    headers: { 'Content-Type': request.headers.get('Content-Type') || 'application/json' },
+    body: request.body,
+  });
+  return Response.json(await response.json(), { status: response.status, headers: response.headers });
+}
