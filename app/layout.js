@@ -16,10 +16,10 @@ export const metadata = {
   description: 'Turn one YouTube link into ten vertical shorts, scheduled and auto-posted.',
   icons: {
     icon: [
-      { url: '/assets/logos/icon-1024.png', type: 'image/png', sizes: '1024x1024' },
+      { url: '/logo.png', type: 'image/png', sizes: '1024x1024' },
       { url: '/favicon.ico', sizes: 'any' },
     ],
-    apple: '/assets/logos/icon-1024.png',
+    apple: '/logo.png',
   },
 };
 

@@ -27,6 +27,7 @@
     "node": ">=18"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "autoprefixer": "^10.6.1",
     "kill-port": "^2.0.1",
     "postcss": "^8.5.31",

@@ -33,7 +33,7 @@ function Brand() {
   return (
     <Link href="/dashboard" aria-label="Clipper Factory" className="inline-flex items-center">
       <img
-        src="/assets/logos/icon-1024.png"
+        src="/logo.png"
         alt="Clipper Factory"
         width={36}
         height={36}
