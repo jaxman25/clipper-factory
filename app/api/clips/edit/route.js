@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DIRS, findClip, sanitizeId, writeJSON } from '@/lib/store';
+import { hasDashboardAccess, unauthorizedHeaders } from '@/lib/auth';
 import { runPython } from '@/lib/spawn';
 
 // Re-render a queued clip with new user-chosen start and end times.
@@ -31,6 +32,13 @@ function findOriginalSource(jobId, clipId) {
 }
 
 export async function POST(request) {
+  if (!hasDashboardAccess(request)) {
+    return new Response('Authentication required', {
+      status: 401,
+      headers: unauthorizedHeaders(),
+    });
+  }
+
   let body;
   try {
     body = await request.json();

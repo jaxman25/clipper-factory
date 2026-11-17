@@ -118,15 +118,21 @@ describe('/api/logs route guards', { skip: unavailable || false }, () => {
     restoreEnv();
   });
 
-  it('keeps GET public while writes are protected', async () => {
+  it('requires auth for GET when credentials are configured', async () => {
     process.env.DASHBOARD_USER = 'jane';
     process.env.DASHBOARD_PASSWORD = 'secret';
 
-    const res = await route.GET(req('GET'));
+    const anonymous = await route.GET(req('GET'));
+    assert.equal(anonymous.status, 401);
+    assert.equal(
+      anonymous.headers.get('www-authenticate'),
+      'Basic realm="Clipper Factory"'
+    );
 
-    assert.equal(res.status, 200);
-    const payload = await res.json();
-    assert.ok(Array.isArray(payload.logs), 'the polling read must stay open');
+    const authorized = await route.GET(req('GET', basic('jane', 'secret')));
+    assert.equal(authorized.status, 200);
+    const payload = await authorized.json();
+    assert.ok(Array.isArray(payload.logs), 'the dashboard can still read the tail');
     restoreEnv();
   });
 

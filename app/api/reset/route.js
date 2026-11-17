@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DIRS, ensureDirs } from '@/lib/store';
+import { hasDashboardAccess, unauthorizedHeaders } from '@/lib/auth';
 
 // Destructive. Requires explicit confirmation so an accidental click can't
 // nuke the queue on a mis-typed request.
@@ -44,6 +45,13 @@ function clearDirectory(name) {
 }
 
 export async function POST(request) {
+  if (!hasDashboardAccess(request)) {
+    return new Response('Authentication required', {
+      status: 401,
+      headers: unauthorizedHeaders(),
+    });
+  }
+
   let raw;
   try {
     raw = await request.text();

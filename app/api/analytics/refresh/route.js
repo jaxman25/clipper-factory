@@ -1,4 +1,5 @@
 import { appendAnalyticsPoint, listPosted, listQueue, loadAnalytics } from '@/lib/store';
+import { hasDashboardAccess, unauthorizedHeaders } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -39,7 +40,14 @@ async function youtubeViews(ids, apiKey) {
  * instead of double counting a cumulative counter. One unit of YouTube quota
  * per batch; no-op (200 + reason) when the key or the videos are missing.
  */
-export async function POST() {
+export async function POST(request) {
+  if (!hasDashboardAccess(request)) {
+    return new Response('Authentication required', {
+      status: 401,
+      headers: unauthorizedHeaders(),
+    });
+  }
+
   const apiKey = String(process.env.YOUTUBE_API_KEY || '').trim();
   if (!apiKey) {
     return Response.json({ ok: false, reason: 'YOUTUBE_API_KEY is not set' });

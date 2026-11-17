@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getToken } from 'next-auth/jwt';
 
-import { hasDashboardAccess, LOCAL_HOSTNAMES, requestHostname, unauthorizedHeaders } from '@/lib/auth';
+import {
+  dashboardCredentialsConfigured,
+  hasDashboardAccess,
+  isLocalRequest,
+  isProduction,
+  unauthorizedHeaders,
+} from '@/lib/auth';
 
 /**
  * Optional dashboard protection. Set DASHBOARD_USER + DASHBOARD_PASSWORD on
@@ -27,6 +33,15 @@ export async function middleware(request) {
     return NextResponse.next();
   }
 
+  // Fail closed: a production deployment with no dashboard credentials must
+  // not expose the dashboard or its APIs at all. Local development is exempt.
+  if (isProduction() && !dashboardCredentialsConfigured()) {
+    return new NextResponse(
+      'Dashboard credentials are not configured. Set DASHBOARD_USER and DASHBOARD_PASSWORD.',
+      { status: 503, headers: { 'Cache-Control': 'no-store' } }
+    );
+  }
+
   if (!hasDashboardAccess(request)) {
     return new NextResponse('Authentication required', {
       status: 401,
@@ -36,7 +51,7 @@ export async function middleware(request) {
 
   const { pathname } = request.nextUrl;
   const isDashboard = pathname === '/dashboard' || pathname.startsWith('/dashboard/');
-  if (isDashboard && !LOCAL_HOSTNAMES.has(requestHostname(request))) {
+  if (isDashboard && !isLocalRequest(request)) {
     let token = null;
     try {
       token = await getToken({ req: request, secret: process.env.NEXTAUTH_SECRET });

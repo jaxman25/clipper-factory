@@ -1,11 +1,19 @@
 import fs from 'node:fs';
 import { findClip, getSecret, sanitizeId } from '@/lib/store';
+import { hasDashboardAccess, unauthorizedHeaders } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const maxDuration = 120;
 
 export async function POST(request) {
+  if (!hasDashboardAccess(request)) {
+    return new Response('Authentication required', {
+      status: 401,
+      headers: unauthorizedHeaders(),
+    });
+  }
+
   let body;
   try {
     body = await request.json();

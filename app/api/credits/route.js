@@ -1,6 +1,6 @@
 import { getServerSession } from 'next-auth';
 import { findUser, isAdminEmail, normalizeEmail } from '@/lib/credits';
-import { LOCAL_HOSTNAMES, requestHostname } from '@/lib/auth';
+import { isLocalRequest } from '@/lib/auth';
 import { authOptions } from '@/lib/next-auth';
 
 export const dynamic = 'force-dynamic';
@@ -15,8 +15,9 @@ const NO_STORE = { 'Cache-Control': 'no-store' };
  * presented as an unlimited admin instead of being asked to sign in.
  */
 export async function GET(request) {
-  const host = requestHostname(request);
-  if (LOCAL_HOSTNAMES.has(host)) {
+  // Local development is still presented as an unlimited admin; production
+  // always resolves the real session, whatever headers the request carries.
+  if (isLocalRequest(request)) {
     return Response.json(
       {
         authenticated: true,

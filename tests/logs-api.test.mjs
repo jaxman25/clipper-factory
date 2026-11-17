@@ -4,8 +4,9 @@
  *   npm run dev          # in one terminal
  *   npm test             # in another
  *
- * With DASHBOARD_USER/DASHBOARD_PASSWORD set in this process the suite also
- * checks that writes need credentials while the read stays open.
+ * Reads and writes both need the dashboard credentials. With
+ * DASHBOARD_USER/DASHBOARD_PASSWORD set in this process the suite checks the
+ * authenticated posture; a credential-free dev server stays open end to end.
  *
  * The data root is taken from the *server* (/api/settings → runtime.data_root)
  * rather than from this process, so the seeded job log always lands in the same
@@ -136,14 +137,14 @@ describe('logs API', { skip: available ? false : 'server not running' }, () => {
     }
   });
 
-  it('matches the configured auth posture for writes', async () => {
-    // Without configured credentials the dashboard is open by design, so the
-    // write must succeed rather than 401.
+  it('matches the configured auth posture for reads and writes', async () => {
+    // Without credentials in this process the outcome depends on the server:
+    // local development is open (200), a configured server rejects (401).
+    // Either way the read must follow the write's posture.
     if (!authHeader) {
       const open = await post();
-      assert.equal(open.status, 200);
       const read = await get();
-      assert.equal(read.status, 200);
+      assert.equal(read.status, open.status === 401 ? 401 : 200);
       return;
     }
 
@@ -156,9 +157,11 @@ describe('logs API', { skip: available ? false : 'server not running' }, () => {
     });
     assert.equal(denied.status, 401);
 
-    // The read stays open even when writes are gated.
+    // The read is gated by the same dashboard credentials.
     const read = await fetch(`${BASE}/api/logs?limit=1`);
-    assert.equal(read.status, 200);
+    assert.equal(read.status, 401);
+    const readAuthed = await fetch(`${BASE}/api/logs?limit=1`, { headers: headers() });
+    assert.equal(readAuthed.status, 200);
   });
 });
 

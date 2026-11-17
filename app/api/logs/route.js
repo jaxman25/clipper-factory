@@ -15,6 +15,9 @@ function unauthorized() {
 }
 
 export async function GET(request) {
+  // Logs carry job ids, source URLs and error text: the read needs the same
+  // dashboard-only posture as the writes.
+  if (!hasDashboardAccess(request)) return unauthorized();
   const { searchParams } = new URL(request.url);
   const limit = Math.max(10, Math.min(500, Number(searchParams.get('limit')) || 120));
   return Response.json(
