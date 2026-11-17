@@ -52,6 +52,14 @@ function Progress({ job, onClear, onCancel, onCanceling }) {
         </button>
       )}
 
+      {!running && job.requested_count != null && (
+        <p className="mt-2 text-[11px] text-subtle">
+          {Number(job.rendered_count ?? (job.clips || []).length)}/{Number(job.requested_count)} rendered
+          {job.selected_count != null ? ` · ${Number(job.selected_count)} selected` : ''}
+          {job.rendered_files != null ? ` · ${Number(job.rendered_files)} files` : ''}
+        </p>
+      )}
+
       {job.error && <p className="mt-3 text-[11px] leading-relaxed text-danger">{job.error}</p>}
     </div>
   );
@@ -61,6 +69,15 @@ export default function GeneratePanel({ autoFocus = false }) {
   const { config, job, setJob, startGeneration, notify, mode, setMode, userConfig } = useStudio();
   const [url, setUrl] = useState('');
   const [num, setNum] = useState(config?.shorts_per_video || 10);
+  const numTouched = useRef(false);
+
+  // The clips config arrives after mount (StudioProvider fetches it), so the
+  // input has to adopt the configured default unless the user already typed.
+  useEffect(() => {
+    if (numTouched.current) return;
+    const configured = Number(config?.shorts_per_video);
+    if (Number.isFinite(configured) && configured > 0) setNum(configured);
+  }, [config?.shorts_per_video]);
   const [busy, setBusy] = useState(false);
   const [canceling, setCanceling] = useState(false);
   const running = job?.status === 'running';
@@ -189,7 +206,10 @@ export default function GeneratePanel({ autoFocus = false }) {
               min={1}
               max={20}
               value={num}
-              onChange={(event) => setNum(event.target.value)}
+              onChange={(event) => {
+                numTouched.current = true;
+                setNum(event.target.value);
+              }}
               disabled={busy || running}
               className="input h-12 w-[88px] text-center tabular-nums"
             />

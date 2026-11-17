@@ -19,6 +19,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
+try:
+    from backend import quality, transcript_quality
+except ImportError:  # pragma: no cover - direct execution
+    import quality  # type: ignore
+    import transcript_quality  # type: ignore
+
 DEFAULT_KEYWORDS = [
     "warned", "forbidden", "spirit", "curse", "night", "disappeared", "village",
     "grandmother", "grandfather", "chief", "witch", "ghost", "mermaid", "ancestors",
@@ -44,6 +50,8 @@ class Word:
     start: float
     end: float
     text: str
+    # Stage 3A evidence.  Optional so existing construction sites stay valid.
+    probability: float | None = None
 
 
 @dataclass
@@ -52,6 +60,12 @@ class Segment:
     end: float
     text: str
     words: list[Word] = field(default_factory=list)
+    # Stage 3A evidence, carried into candidate assessment.  Missing values
+    # stay None rather than being inferred from another metric.
+    avg_logprob: float | None = None
+    no_speech_prob: float | None = None
+    compression_ratio: float | None = None
+    temperature: float | None = None
 
 
 @dataclass
@@ -62,6 +76,7 @@ class Candidate:
     words: list[Word]
     score: float
     reasons: list[str] = field(default_factory=list)
+    quality: dict | None = None
 
     @property
     def duration(self) -> float:
@@ -174,7 +189,12 @@ def _score_text(text: str, keywords: Iterable[str], audio_peak: float) -> tuple[
 
 
 def build_segments(raw_segments: Sequence[dict]) -> list[Segment]:
-    """Normalise faster-whisper output into Segment/Word objects."""
+    """Normalise faster-whisper output into Segment/Word objects.
+
+    Stage 3A evidence is copied through additively.  Legacy raw segments that
+    only contain text/timestamps still build exactly as before; their quality
+    metrics remain ``None`` and are reported as unavailable, not as poor.
+    """
     segments: list[Segment] = []
     for raw in raw_segments:
         text = (raw.get("text") or "").strip()
@@ -183,11 +203,31 @@ def build_segments(raw_segments: Sequence[dict]) -> list[Segment]:
         if not text or end <= start:
             continue
         words = [
-            Word(float(w.get("start", start)), float(w.get("end", end)), (w.get("word") or "").strip())
+            Word(
+                float(w.get("start", start)),
+                float(w.get("end", end)),
+                (w.get("word") or "").strip(),
+                transcript_quality.finite_float(w.get("probability")),
+            )
             for w in raw.get("words") or []
             if w.get("word")
         ]
-        segments.append(Segment(start, end, text, words))
+        segments.append(
+            Segment(
+                start,
+                end,
+                text,
+                words,
+                avg_logprob=transcript_quality.finite_float(raw.get("avg_logprob")),
+                no_speech_prob=transcript_quality.finite_float(
+                    raw.get("no_speech_prob")
+                ),
+                compression_ratio=transcript_quality.finite_float(
+                    raw.get("compression_ratio")
+                ),
+                temperature=transcript_quality.finite_float(raw.get("temperature")),
+            )
+        )
     return segments
 
 
@@ -224,6 +264,11 @@ def find_candidates(
             text = _join(window)
             spike = _audio_spike(rms, window[0].start, window[-1].end)
             score, reasons = _score_text(text, keywords, spike)
+            # Prefer a window that opens where the previous segment closed a
+            # sentence, so a clip starts on a complete thought too.
+            if i > 0 and SENTENCE_END.search(segments[i - 1].text.strip()):
+                score += 3.0
+                reasons.append("starts a complete thought")
             # Prefer windows that land on a sentence end and fill the 30-45s slot.
             if SENTENCE_END.search(window[-1].text.strip()):
                 score += 4.0
@@ -239,6 +284,7 @@ def find_candidates(
                     words=_words_between(window),
                     score=max(0.0, min(100.0, score * 2.1)),
                     reasons=reasons,
+                    quality=quality.assess_segments(window, text=text),
                 )
             )
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -30,6 +31,9 @@ except ImportError:  # pragma: no cover
 DEFAULTS: dict[str, Any] = {
     "timezone": "Africa/Nairobi",
     "posting_times": ["19:00", "21:00"],
+    # "auto" keeps faster-whisper's detection for multilingual sources. Set
+    # an ISO code (for example "en") per job when the source language is known.
+    "language": "auto",
     "shorts_per_video": 10,
     "clip_min_seconds": 30,
     "clip_max_seconds": 45,
@@ -182,15 +186,84 @@ def load_config() -> dict[str, Any]:
     return cfg
 
 
+# ---------------------------------------------------------------------------
+# Credential redaction
+# ---------------------------------------------------------------------------
+# Provider exceptions embed the request URL (``requests`` quotes it verbatim),
+# and Gemini/Pixabay used to carry their API key in the query string. Logging
+# that text wrote the key into ``state/logs.jsonl``, which ``GET /api/logs``
+# serves to the dashboard - a live secret-exposure path, not just noisy logs.
+# Every log line now passes through ``redact_secrets`` before it is written.
+REDACTED = "[REDACTED]"
+
+_SECRET_PARAMS = (
+    "access_token",
+    "refresh_token",
+    "client_secret",
+    "id_token",
+    "api_key",
+    "apikey",
+    "api-key",
+    "x-goog-api-key",
+    "x-api-key",
+    "password",
+    "signature",
+    "secret",
+    "token",
+    "sig",
+    "key",
+)
+
+# ``?key=...``, ``&api_key=...``, ``key: ...`` - inside URLs and plain text.
+# ``(?!\[REDACTED\])`` keeps a second pass (the provider site redacts, then
+# ``log`` redacts again) from producing ``[REDACTED]]``.
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)(?<![\w-])(" + "|".join(re.escape(name) for name in _SECRET_PARAMS) + r")"
+    r"(\s*[=:]\s*)(?!\[REDACTED\])([^\s&\"',;)\]}]+)"
+)
+# ``Authorization: Bearer abc123`` / ``Authorization: dXNlcjpwYXNz``.
+_AUTHORIZATION = re.compile(
+    r"(?i)\b(authorization\s*[:=]\s*)((?:basic|bearer|token)\s+)?([^\s,;\"')]+)"
+)
+# A bare ``Bearer abc123`` without the header name.
+_BEARER = re.compile(r"(?i)(\bbearer\s+)[A-Za-z0-9\-._~+/=]{8,}")
+
+
+def redact_secrets(value: Any) -> Any:
+    """Replace credential-bearing parameters in ``value`` with ``[REDACTED]``.
+
+    ``value`` is usually an exception string or a URL. Strings inside lists and
+    dicts passed as structured log fields are cleaned the same way; every other
+    type is returned untouched so log payloads keep their types.
+    """
+    if isinstance(value, str):
+        if not value:
+            return value
+        cleaned = _AUTHORIZATION.sub(
+            lambda match: f"{match.group(1)}{match.group(2) or ''}{REDACTED}", value
+        )
+        cleaned = _SECRET_ASSIGNMENT.sub(
+            lambda match: f"{match.group(1)}{match.group(2)}{REDACTED}", cleaned
+        )
+        return _BEARER.sub(lambda match: f"{match.group(1)}{REDACTED}", cleaned)
+    if isinstance(value, list):
+        return [redact_secrets(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_secrets(item) for item in value)
+    if isinstance(value, dict):
+        return {key: redact_secrets(item) for key, item in value.items()}
+    return value
+
+
 def log(level: str, message: str, **fields: Any) -> None:
     entry = {
         "ts": datetime.now().astimezone().isoformat(timespec="seconds"),
         "level": level,
-        "message": message,
+        "message": redact_secrets(message),
     }
     if fields:
-        entry.update(fields)
-    line = f"[{entry['ts']}] {level.upper():<7} {message}"
+        entry.update({name: redact_secrets(value) for name, value in fields.items()})
+    line = f"[{entry['ts']}] {level.upper():<7} {entry['message']}"
     with _lock:
         print(line, file=sys.stderr, flush=True)
         try:

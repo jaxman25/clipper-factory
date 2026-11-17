@@ -11,6 +11,7 @@ the ``ass`` filter, so no extra runtime dependency is needed.
 from __future__ import annotations
 
 import re
+import textwrap
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -87,6 +88,40 @@ def _escape(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+HOOK_SAFE_WIDTH = 960  # 1080 px minus 60 px margins on each side
+HOOK_FONT_SIZES = (92, 84, 76, 68, 60, 52, 48)
+
+
+def _wrap_hook(hook: str) -> tuple[str, int]:
+    """Wrap a hook into at most two safe-width lines, shrinking if needed.
+
+    The ASS style's 92 px font is the starting point, not a fixed size. A
+    rough 0.58 em average glyph width keeps this independent of fontconfig;
+    the renderer still clips at the safe area if a particular font is wider.
+    """
+    text = _escape(hook.upper())
+    if not text:
+        return "", 92
+    for font_size in HOOK_FONT_SIZES:
+        max_chars = max(12, int(HOOK_SAFE_WIDTH / (font_size * 0.58)))
+        lines = textwrap.wrap(
+            text,
+            width=max_chars,
+            break_long_words=False,
+            break_on_hyphens=True,
+        )
+        if len(lines) <= 2:
+            return "\\N".join(lines), font_size
+    # Pathological hook: cap it at two lines rather than allowing a third
+    # line outside the vertical safe area. The caller's hook prompt normally
+    # caps length well before this branch.
+    max_chars = max(12, int(HOOK_SAFE_WIDTH / (HOOK_FONT_SIZES[-1] * 0.58)))
+    lines = textwrap.wrap(text, width=max_chars, break_long_words=False)[:2]
+    if len(lines) == 2:
+        lines[1] = lines[1].rstrip(" .,;:-") + "..."
+    return "\\N".join(lines), HOOK_FONT_SIZES[-1]
+
+
 def _is_highlight_word(word: str, highlight_words: Sequence[str] | None = None) -> bool:
     if not highlight_words:
         return False
@@ -151,6 +186,7 @@ def build_ass(
     transcript: str = "",
     label: str = "",
     highlight_words: Sequence[str] | None = None,
+    captions_during_hook: bool = False,
 ) -> str:
     """Return a complete .ass document for one clip.
 
@@ -173,10 +209,11 @@ def build_ass(
         )
 
     if hook:
+        hook_text, hook_font = _wrap_hook(hook)
         events.append(
             f"Dialogue: 1,{_ts(0)},{_ts(min(duration, hook_seconds))},Hook,,0,0,0,,"
-            f"{{\\fad(90,140)\\fscx88\\fscy88\\t(0,120,\\fscx104\\fscy104)}}"
-            f"{_escape(hook.upper())}"
+            f"{{\\fad(90,140)\\fs{hook_font}\\fscx88\\fscy88\\t(0,120,\\fscx104\\fscy104)}}"
+            f"{hook_text}"
         )
 
     scaled = [
@@ -203,7 +240,7 @@ def build_ass(
         if card_idx > 0:
             start = max(start, prev_end + 0.01)
         end = min(end, duration)
-        if hook and start < hook_seconds - 0.05:
+        if hook and not captions_during_hook and start < hook_seconds - 0.05:
             prev_end = end
             continue
         if start >= duration - 0.15:

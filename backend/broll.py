@@ -81,7 +81,9 @@ def fetch(query: str = DEFAULT_QUERY, dest_dir: Path | None = None) -> Path | No
         response.raise_for_status()
         hits = response.json().get("hits", [])
     except Exception as exc:  # network/API failure must never abort a render
-        common.warn(f"Pixabay search failed: {exc}")
+        # The request URL carries ``?key=...``, and requests quotes the URL in
+        # its HTTPError text - redact before it can reach the activity log.
+        common.warn(f"Pixabay search failed: {common.redact_secrets(str(exc))}")
         return None
 
     # Portrait first; anything else is still usable as a cropped fallback.
@@ -104,7 +106,7 @@ def fetch(query: str = DEFAULT_QUERY, dest_dir: Path | None = None) -> Path | No
                 return target
             target.unlink(missing_ok=True)
         except Exception as exc:
-            common.warn(f"Pixabay download failed: {exc}")
+            common.warn(f"Pixabay download failed: {common.redact_secrets(str(exc))}")
             target.unlink(missing_ok=True)
     common.warn("No suitable Pixabay clip found - using gradient fallback")
     return None

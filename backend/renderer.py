@@ -22,6 +22,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -101,6 +104,120 @@ def _fonts_dir() -> Path | None:
     return None
 
 
+# drawtext resolves its family through fontconfig; when the build has no
+# default fontconfig config (the Windows gyan package ships no etc/fonts) it
+# crashes with an access violation instead of an error. An explicit fontfile
+# bypasses fontconfig, so these are plain files we know exist on each target.
+_DRAWTEXT_FONT_WARNED = False
+_DRAWTEXT_FONT_NAMES = ("arialbd.ttf", "arial.ttf", "seguisb.ttf", "segoeui.ttf")
+_DRAWTEXT_LINUX_FONTS = (
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+)
+
+
+def _drawtext_font() -> Path | None:
+    """First usable font file for the handle overlay, or ``None``.
+
+    Resolution order: ``ACF_DRAWTEXT_FONT``, project ``assets/fonts``, then a
+    short list of fonts that ship with Windows and with the DejaVu/Liberation
+    packages the Linux image already installs.
+    """
+    explicit = os.getenv("ACF_DRAWTEXT_FONT", "").strip()
+    if explicit:
+        path = Path(explicit)
+        if path.is_file():
+            return path
+        common.warn(f"ACF_DRAWTEXT_FONT is not a file: {explicit}")
+
+    project_fonts = paths.ASSETS / "fonts"
+    if project_fonts.is_dir():
+        for candidate in sorted(project_fonts.glob("*")):
+            if candidate.is_file() and candidate.suffix.lower() in {".ttf", ".otf"}:
+                return candidate
+
+    if sys.platform == "win32":
+        fonts_dir = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
+        for name in _DRAWTEXT_FONT_NAMES:
+            candidate = fonts_dir / name
+            if candidate.is_file():
+                return candidate
+    for name in _DRAWTEXT_LINUX_FONTS:
+        candidate = Path(name)
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _warn_missing_drawtext_font() -> None:
+    """Warn once per process: a job can render the same overlay nine times."""
+    global _DRAWTEXT_FONT_WARNED
+    if _DRAWTEXT_FONT_WARNED:
+        return
+    _DRAWTEXT_FONT_WARNED = True
+    common.warn(
+        "handle watermark skipped: no drawtext font found "
+        "(set ACF_DRAWTEXT_FONT to a .ttf/.otf file)"
+    )
+
+
+def _stall_timeout() -> float:
+    """Seconds without a progress update before a render counts as hung."""
+    try:
+        value = float(os.getenv("ACF_RENDER_STALL_SECONDS", "") or 180.0)
+    except ValueError:
+        return 180.0
+    return value if value > 0 else 180.0
+
+
+def _face_centres(result: Any) -> list[tuple[float, float]]:
+    """Face centres from a ``FaceLandmarkerResult``.
+
+    ``FaceLandmarker`` returns ``face_landmarks`` (normalised landmark lists),
+    not the legacy Face Detection ``detections``. The previous parser read
+    ``result.detections`` and raised ``AttributeError`` on every frame, so the
+    cinematic fallback was never a fallback - it was the only outcome. The
+    centre is the midpoint of each face's min/max landmark coordinates.
+    """
+    faces = getattr(result, "face_landmarks", None) or []
+    centres: list[tuple[float, float]] = []
+    for landmarks in faces:
+        if not landmarks:
+            continue
+        xs = [float(point.x) for point in landmarks]
+        ys = [float(point.y) for point in landmarks]
+        if not xs or not ys:
+            continue
+        centres.append(((min(xs) + max(xs)) / 2.0, (min(ys) + max(ys)) / 2.0))
+    return centres
+
+
+def _landmarker_options(model_path: Path):
+    """FaceLandmarker options with the correct BaseOptions import.
+
+    ``BaseOptions`` lives in ``mediapipe.tasks.python``. The previous code
+    called it unqualified inside a ``try`` block, so every call raised
+    ``NameError`` and the exception was swallowed into the cinematic
+    fallback - face detection never actually ran.
+    """
+    from mediapipe.tasks import python as tasks_python
+    from mediapipe.tasks.python import vision
+
+    # mediapipe >= 0.10 exposes RunningMode; older builds used
+    # VisionTaskRunningMode. Accept either so the import can never turn a
+    # working detector into a silent cinematic fallback.
+    running_mode = getattr(vision, "VisionTaskRunningMode", None) or vision.RunningMode
+    return vision.FaceLandmarkerOptions(
+        base_options=tasks_python.BaseOptions(model_asset_path=str(model_path)),
+        running_mode=running_mode.IMAGE,
+        num_faces=1,
+        min_face_detection_confidence=0.4,
+        min_tracking_confidence=0.5,
+    )
+
+
 def detect_face_center(video: Path, start: float, end: float) -> tuple[float, float] | None:
     """Median face centre (x, y as 0..1 fractions) across sampled frames.
 
@@ -124,13 +241,7 @@ def detect_face_center(video: Path, start: float, end: float) -> tuple[float, fl
 
     landmarker = None
     try:
-        options = vision.FaceLandmarkerOptions(
-            base_options=BaseOptions(model_asset_path=str(model_path)),
-            running_mode=vision.VisionTaskRunningMode.IMAGE,
-            num_faces=1,
-            min_face_detection_confidence=0.4,
-            min_tracking_confidence=0.5,
-        )
+        options = _landmarker_options(model_path)
         landmarker = vision.FaceLandmarker.create_from_options(options)
     except Exception as exc:
         common.info(f"face landmarker unavailable ({exc}); using cinematic fallback")
@@ -157,11 +268,9 @@ def detect_face_center(video: Path, start: float, end: float) -> tuple[float, fl
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
             result = landmarker.detect(mp_image)
-            if not result.detections:
-                continue
-            box = result.detections[0].location_data.relative_bounding_box
-            xs.append(box.xmin + box.width / 2)
-            ys.append(box.ymin + box.height / 2)
+            for centre_x, centre_y in _face_centres(result):
+                xs.append(centre_x)
+                ys.append(centre_y)
     finally:
         cap.release()
         if landmarker:
@@ -227,16 +336,148 @@ def _crop_geometry(width: int, height: int, face: tuple[float, float] | None) ->
     return crop_w, crop_h, x, y
 
 
-def _run_ffmpeg(args: list[str], timeout: float) -> None:
-    ffmpeg = which_ffmpeg()
-    cmd = [ffmpeg, "-y", "-hide_banner", "-nostdin", *args]
-    common.info("ffmpeg " + " ".join(cmd[1:6]) + " ...")
+def _write_ffmpeg_diagnostic(
+    path: Path | None,
+    cmd: list[str],
+    state: dict[str, str],
+    returncode: int | None,
+    stderr: str,
+) -> None:
+    """Preserve the full command, exit state and stderr for a failed render.
+
+    The normal RenderError keeps only the last 12 lines for the UI/log tail,
+    which was not enough to identify the first Stage 5 failure. This sidecar
+    is written only after a stall, timeout or non-zero exit; successful
+    renders create no file.
+    """
+    if path is None:
+        return
+    command = " ".join(cmd)
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        raise RenderError(f"ffmpeg timed out after {timeout:.0f}s") from exc
-    if result.returncode != 0:
-        tail = (result.stderr or "").strip().splitlines()[-12:]
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = [
+            f"timestamp: {datetime.now().astimezone().isoformat(timespec='seconds')}",
+            f"exit_code: {returncode if returncode is not None else 'not-started'}",
+            f"killed: {state.get('killed') or 'no'}",
+            f"last_frame: {state.get('frame') or 'none'}",
+            f"phase: {state.get('progress') or 'unknown'}",
+            "command:",
+            common.redact_secrets(command),
+            "--- stderr (complete, capped at 2 MiB) ---",
+            common.redact_secrets(stderr[-2_000_000:]),
+        ]
+        path.write_text("\n".join(body) + "\n", encoding="utf-8")
+        common.warn(f"ffmpeg diagnostics saved to {path}")
+    except OSError as exc:
+        common.warn(f"Could not write ffmpeg diagnostics to {path}: {exc}")
+
+
+def _diagnostics_path_for(args: list[str]) -> Path | None:
+    """Derive the sidecar path from a render's final output filename."""
+    if not args:
+        return None
+    candidate = Path(args[-1])
+    if candidate.suffix.lower() not in {".mp4", ".mov", ".mkv"}:
+        return None
+    return candidate.with_suffix(".ffmpeg.log")
+
+
+def _run_ffmpeg(
+    args: list[str],
+    timeout: float,
+    stall_timeout: float | None = None,
+) -> None:
+    """Run ffmpeg while watching ``-progress`` for a hung encode.
+
+    The Phase 6 acceptance run burned its full 912 s timeout after the writer
+    stopped at ~98% while ffmpeg stayed alive, so a total timeout alone cannot
+    tell slow encoding from a finalize hang. Progress lines reset a watchdog;
+    ``progress=end`` means ffmpeg reached normal finalization, where the
+    watchdog stands down and only the overall timeout applies.
+    """
+    ffmpeg = which_ffmpeg()
+    diagnostics_path = _diagnostics_path_for(args)
+    cmd = [
+        ffmpeg, "-y", "-hide_banner", "-nostdin",
+        "-progress", "pipe:1", "-nostats", *args,
+    ]
+    common.info("ffmpeg " + " ".join(cmd[1:6]) + " ...")
+    stall_limit = _stall_timeout() if stall_timeout is None else float(stall_timeout)
+    started = time.monotonic()
+    state = {"last": started, "frame": "", "progress": "", "killed": ""}
+    stop = threading.Event()
+
+    # stderr goes to a temp file, not a pipe: a fontconfig/ffmpeg build that
+    # logs per frame fills a 64 KiB pipe and blocks the encoder forever.
+    with tempfile.TemporaryFile() as err_file:
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=err_file,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+
+        def _watch() -> None:
+            while not stop.wait(2.0):
+                now = time.monotonic()
+                if now - started > timeout:
+                    state["killed"] = "timeout"
+                    proc.kill()
+                    return
+                if state["progress"] == "end":
+                    # Finalizing: frames are done, the muxer is flushing.
+                    continue
+                if now - state["last"] > stall_limit:
+                    state["killed"] = "stall"
+                    proc.kill()
+                    return
+
+        watcher = threading.Thread(target=_watch, name="ffmpeg-watchdog", daemon=True)
+        watcher.start()
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                if line.startswith("frame="):
+                    state["frame"] = line.split("=", 1)[1]
+                    state["last"] = time.monotonic()
+                elif line.startswith("progress="):
+                    state["progress"] = line.split("=", 1)[1]
+                    state["last"] = time.monotonic()
+        finally:
+            stop.set()
+            watcher.join(timeout=5)
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            if proc.stdout:
+                proc.stdout.close()
+        err_file.seek(0)
+        stderr = err_file.read().decode("utf-8", "replace")
+
+    if state["killed"] == "stall":
+        where = f"last frame {state['frame']}" if state["frame"] else "no frames encoded"
+        _write_ffmpeg_diagnostic(
+            diagnostics_path, cmd, state, proc.returncode, stderr
+        )
+        raise RenderError(
+            f"ffmpeg stalled: no progress for {stall_limit:.0f}s "
+            f"({where}, phase={state['progress'] or 'unknown'})"
+        )
+    if state["killed"] == "timeout":
+        where = f" (last frame {state['frame']})" if state["frame"] else ""
+        _write_ffmpeg_diagnostic(
+            diagnostics_path, cmd, state, proc.returncode, stderr
+        )
+        raise RenderError(f"ffmpeg timed out after {timeout:.0f}s{where}")
+    if proc.returncode != 0:
+        _write_ffmpeg_diagnostic(
+            diagnostics_path, cmd, state, proc.returncode, stderr
+        )
+        tail = stderr.strip().splitlines()[-12:]
         raise RenderError("ffmpeg failed: " + " | ".join(tail))
 
 
@@ -302,6 +543,8 @@ def render_clip(
     progress_bar: bool = False,
     handle: str = "",
     music_db: float | None = None,
+    force_broll: bool = False,
+    captions_during_hook: bool = False,
     **kwargs: Any,
 ) -> dict:
     """Render one vertical short. Returns render metadata.
@@ -343,7 +586,18 @@ def render_clip(
         out_duration = min(out_duration, max_duration)
         setpts_expr = f"PTS/{speed:.4f}"
 
-    face = detect_face_center(source, start, end) if info.get("height") else None
+    try:
+        face = (
+            detect_face_center(source, start, end)
+            if info.get("height") and not force_broll
+            else None
+        )
+    except Exception as exc:
+        # A detector failure (model/API mismatch, unreadable frame) must fall
+        # back to the cinematic path instead of aborting an otherwise valid
+        # render. The detection path is still exercised on every normal run.
+        common.warn(f"face detection failed ({exc}); using cinematic fallback")
+        face = None
     width = info.get("width") or 0
     height = info.get("height") or 0
 
@@ -364,6 +618,7 @@ def render_clip(
         outro_text=str(cfg.get("outro_text", "") or ""),
         outro_seconds=float(cfg.get("outro_seconds", 2) or 2),
         transcript=transcript,
+        captions_during_hook=captions_during_hook,
         label=label,
         highlight_words=(
             highlight_words
@@ -487,14 +742,19 @@ def render_clip(
 
     handle_clean = re.sub(r"[^A-Za-z0-9_.-]", "", handle or "")
     if handle_clean:
-        filters.append(
-            f"[{video_out}]drawtext=text='@{handle_clean}':"
-            f"fontcolor=white@0.92:fontsize=44:"
-            f"borderw=2:bordercolor=black@0.75:"
-            f"box=1:boxcolor=black@0.28:boxborderw=12:"
-            f"x=28:y=28[handled]"
-        )
-        video_out = "handled"
+        handle_font = _drawtext_font()
+        if handle_font:
+            filters.append(
+                f"[{video_out}]drawtext=fontfile='{_filter_path(handle_font)}':"
+                f"text='@{handle_clean}':"
+                f"fontcolor=white@0.92:fontsize=44:"
+                f"borderw=2:bordercolor=black@0.75:"
+                f"box=1:boxcolor=black@0.28:boxborderw=12:"
+                f"x=28:y=28[handled]"
+            )
+            video_out = "handled"
+        else:
+            _warn_missing_drawtext_font()
 
     if progress_bar:
         # Progress bar at the bottom, growing left-to-right. drawbox cannot
@@ -589,10 +849,22 @@ def render_clip(
     ])
 
     timeout = 240 + raw_duration * 20
-    _run_ffmpeg(args, timeout)
-
-    if not out_path.exists() or out_path.stat().st_size < 20_000:
-        raise RenderError(f"render produced an empty file: {out_path}")
+    try:
+        _run_ffmpeg(args, timeout)
+        if not out_path.exists() or out_path.stat().st_size < 20_000:
+            raise RenderError(f"render produced an empty file: {out_path}")
+    except RenderError:
+        # A failed or stalled render must not leave a half-muxed clip behind:
+        # no queue item points at it, so it is dead weight (Phase 6 left a
+        # 4.19 MB orphan in exports/ when its render timed out).
+        for leftover in (out_path, thumb_path):
+            if not leftover:
+                continue
+            try:
+                Path(leftover).unlink(missing_ok=True)
+            except OSError:
+                pass
+        raise
     if thumb_path:
         make_thumbnail(out_path, thumb_path, at=min(1.2, max(0.2, out_duration / 3)))
 

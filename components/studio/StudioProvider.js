@@ -197,10 +197,12 @@ export function StudioProvider({ children }) {
         url,
         num_shorts: Number(numShorts),
         mode,
+        // Saved preferences reach the worker now. The API treats explicit
+        // per-job fields (mode, num_shorts, clip_max_seconds) as higher
+        // priority, so a stored value can never override this run's request.
+        ...(pc ? { user_config: pc } : {}),
         ...(youtubeAutoPost !== null && { youtube_auto_post: youtubeAutoPost }),
-
       };
-      const pick = (key) => pc ? pc[key] : undefined;
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

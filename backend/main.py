@@ -23,7 +23,7 @@ import time
 import traceback
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 HERE = Path(__file__).resolve().parent
 if str(HERE.parent) not in sys.path:
@@ -31,16 +31,19 @@ if str(HERE.parent) not in sys.path:
 
 try:
     from backend import broll as broll_mod
-    from backend import captions, common, paths, renderer, scheduling, telegram, transform, viral
+    from backend import captions, common, paths, quality, renderer, scheduling, selection, telegram, transform, transcript_quality, viral
 except ImportError:  # pragma: no cover - fallback for direct execution
     import broll as broll_mod  # type: ignore
     import captions  # type: ignore
     import common  # type: ignore
     import paths  # type: ignore
+    import quality  # type: ignore
     import renderer  # type: ignore
     import scheduling  # type: ignore
+    import selection  # type: ignore
     import telegram  # type: ignore
     import transform  # type: ignore
+    import transcript_quality  # type: ignore
     import viral  # type: ignore
 
 WHISPER_DIR = Path(os.getenv("WHISPER_MODEL_DIR", "/tmp/whisper_models"))
@@ -87,6 +90,9 @@ class Job:
             "message": "Starting job",
             "source_url": url,
             "num_shorts": num_shorts,
+            "requested_count": num_shorts,
+            "selected_count": 0,
+            "rendered_count": 0,
             "mode": mode,
             "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
             "updated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
@@ -146,13 +152,44 @@ class Job:
         self._write()
 
     def finish(self, clips: list[dict], **extra: Any) -> None:
+        """Write the terminal document with requested/selected/rendered counts.
+
+        The message never claims the requested number when selection or
+        rendering produced fewer clips: the dashboard shows this sentence, so
+        it has to be truthful on its own.
+        """
+        payload = dict(extra)
+        requested = int(
+            payload.pop("requested_count", None)
+            or self.data.get("requested_count")
+            or self.data.get("num_shorts")
+            or 0
+        )
+        rendered = len(clips)
+        pieces = payload.get("pieces_rendered")
+        if pieces is not None and requested:
+            message = (
+                f"{pieces}/{requested} transformed pieces ready "
+                f"({rendered} platform files)"
+            )
+        elif requested and rendered < requested:
+            message = f"{rendered} of {requested} shorts ready (shortfall)"
+        else:
+            message = f"{rendered} shorts ready"
+        payload.setdefault("requested_count", requested)
+        # Transform renders `pieces` source segments into `files` platform
+        # videos. Report pieces as the rendered count so "10 requested" reads
+        # against 10 pieces, with the file count kept separately.
+        payload["rendered_count"] = pieces if pieces is not None else rendered
+        if pieces is not None:
+            payload["rendered_files"] = rendered
         self.data.update(
             status="done",
             stage="complete",
             progress=100,
-            message=f"{len(clips)} shorts ready",
+            message=message,
             clips=clips,
-            **extra,
+            **payload,
         )
         self._write()
 
@@ -299,7 +336,170 @@ def extract_audio(video: Path, job_id: str) -> Path:
     return audio
 
 
-def transcribe(audio: Path, job: Job) -> tuple[list[dict], str, float]:
+def _resolve_whisper_language(args: argparse.Namespace, cfg: dict) -> str | None:
+    """Resolve an optional explicit language; return None for auto-detect.
+
+    Precedence is per-job CLI/API, then env, then saved config. "auto" is the
+    default and deliberately passes no language to faster-whisper.
+    """
+    raw = (
+        getattr(args, "language", None)
+        or os.getenv("WHISPER_LANGUAGE")
+        or cfg.get("language")
+        or "auto"
+    )
+    value = str(raw).strip()
+    if not value or value.lower() == "auto":
+        return None
+    return value
+
+
+def _safe_tokens(value: Any) -> list[int] | None:
+    """Keep decoded token ids when present; never manufacture missing ids."""
+    if value is None:
+        return None
+    try:
+        raw_tokens = list(value)
+    except TypeError:
+        return None
+    tokens: list[int] = []
+    for item in raw_tokens:
+        token = transcript_quality.optional_int(item)
+        if token is not None:
+            tokens.append(token)
+    return tokens
+
+
+def _all_language_probabilities(value: Any) -> list[list[Any]] | None:
+    """Normalise ``info.all_language_probs`` into JSON-safe pairs."""
+    if value is None:
+        return None
+    try:
+        entries = list(value)
+    except TypeError:
+        return None
+    result: list[list[Any]] = []
+    for entry in entries:
+        if not isinstance(entry, (list, tuple)) or len(entry) < 2:
+            continue
+        result.append([str(entry[0]), transcript_quality.finite_float(entry[1])])
+    return result
+
+
+def _word_evidence(word: Any) -> dict[str, Any]:
+    """Preserve a word's timing, text and probability without inventing data."""
+    return {
+        "start": transcript_quality.finite_float(getattr(word, "start", None)),
+        "end": transcript_quality.finite_float(getattr(word, "end", None)),
+        "word": str(getattr(word, "word", "") or "").strip(),
+        "probability": transcript_quality.finite_float(
+            getattr(word, "probability", None)
+        ),
+    }
+
+
+def _segment_evidence(segment: Any) -> dict[str, Any]:
+    """Preserve the segment fields faster-whisper exposes, including quality."""
+    words = [
+        _word_evidence(word)
+        for word in (getattr(segment, "words", None) or [])
+        if getattr(word, "word", None)
+    ]
+    return {
+        "id": transcript_quality.optional_int(getattr(segment, "id", None)),
+        "seek": transcript_quality.optional_int(getattr(segment, "seek", None)),
+        "start": transcript_quality.finite_float(getattr(segment, "start", None)),
+        "end": transcript_quality.finite_float(getattr(segment, "end", None)),
+        "text": str(getattr(segment, "text", "") or "").strip(),
+        "avg_logprob": transcript_quality.finite_float(
+            getattr(segment, "avg_logprob", None)
+        ),
+        "no_speech_prob": transcript_quality.finite_float(
+            getattr(segment, "no_speech_prob", None)
+        ),
+        "compression_ratio": transcript_quality.finite_float(
+            getattr(segment, "compression_ratio", None)
+        ),
+        "temperature": transcript_quality.finite_float(
+            getattr(segment, "temperature", None)
+        ),
+        "tokens": _safe_tokens(getattr(segment, "tokens", None)),
+        "words": words,
+    }
+
+
+def _write_transcript_evidence(
+    job: Job,
+    segments: list[dict[str, Any]],
+    info: Any,
+    *,
+    requested_language: str,
+    detected_language: str,
+    language_probability: float | None,
+    total_duration: float,
+) -> Path | None:
+    """Write the raw transcript and its metrics under ``exports/<job_id>``.
+
+    The sidecar is deliberately separate from the job document: segments can
+    be large, and the job/manifest only need the small quality summary and the
+    relative sidecar name.  The source URL and environment are never copied
+    into this file.
+    """
+    job_id = getattr(job, "id", None)
+    if not isinstance(job_id, str) or not job_id:
+        return None
+
+    quality = transcript_quality.summarize_transcript(
+        segments,
+        duration=total_duration,
+        duration_after_vad=getattr(info, "duration_after_vad", None),
+        language_probability=language_probability,
+        all_language_probs=getattr(info, "all_language_probs", None),
+    )
+    payload = {
+        "version": 1,
+        "job_id": job_id,
+        "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "language": detected_language,
+        "language_probability": language_probability,
+        "language_requested": requested_language or "auto",
+        "duration": transcript_quality.finite_float(total_duration),
+        "duration_after_vad": transcript_quality.finite_float(
+            getattr(info, "duration_after_vad", None)
+        ),
+        "all_language_probs": _all_language_probabilities(
+            getattr(info, "all_language_probs", None)
+        ),
+        "segment_count": len(segments),
+        "text": " ".join(
+            str(segment.get("text") or "").strip() for segment in segments
+        ).strip(),
+        "segments": segments,
+        "quality": quality,
+    }
+
+    sidecar = paths.EXPORTS / job_id / "transcript.json"
+    try:
+        sidecar.parent.mkdir(parents=True, exist_ok=True)
+        common.write_json(sidecar, payload)
+    except (OSError, TypeError, ValueError) as exc:
+        common.warn(
+            "Could not write transcript sidecar "
+            f"({common.redact_secrets(str(exc))[:200]})"
+        )
+        job.update(transcript_quality=quality, transcript_sidecar=None)
+        return None
+
+    job.update(
+        transcript_quality=quality,
+        transcript_sidecar="transcript.json",
+    )
+    return sidecar
+
+
+def transcribe(
+    audio: Path, job: Job, language: str | None = None
+) -> tuple[list[dict], str, float]:
     from faster_whisper import WhisperModel
 
     model_name = os.getenv("WHISPER_MODEL", "tiny")
@@ -325,44 +525,69 @@ def transcribe(audio: Path, job: Job) -> tuple[list[dict], str, float]:
         ) from exc
 
     job.update(progress=22, message="Transcribing audio")
+    requested_language = (language or "").strip()
     try:
-        segment_iter, info = model.transcribe(
-            str(audio),
-            word_timestamps=True,
+        transcribe_options = {
+            "word_timestamps": True,
             # Chunked decoding: the audio is processed in 30-second segments
             # instead of one giant (1, samples, n_mels) array, which is what
             # blew past the memory limit (~950 MiB) on long sources.
-            chunk_length=30,
+            "chunk_length": 30,
             # Greedy decoding keeps only one hypothesis alive (no beam search
             # scratch space) - much lighter on a 512 MB box.
-            beam_size=1,
+            "beam_size": 1,
             # VAD filter enabled: silent stretches are skipped entirely, so
             # they never reach the feature extractor and peak RAM stays down.
-            vad_filter=True,
-            condition_on_previous_text=False,
-        )
+            "vad_filter": True,
+            "condition_on_previous_text": False,
+        }
+        if requested_language and requested_language.lower() != "auto":
+            transcribe_options["language"] = requested_language
+        segment_iter, info = model.transcribe(str(audio), **transcribe_options)
     except Exception as exc:
         raise JobError(f"Transcription failed: {exc}") from exc
 
     total = float(getattr(info, "duration", 0.0) or 0.0)
     segments: list[dict] = []
     for seg in segment_iter:
-        words = []
-        for word in getattr(seg, "words", None) or []:
-            text = (word.word or "").strip()
-            if text:
-                words.append({"start": float(word.start), "end": float(word.end), "word": text})
-        segments.append(
-            {"start": float(seg.start), "end": float(seg.end), "text": seg.text.strip(), "words": words}
-        )
+        # Keep every available Whisper field here. Selection still consumes only
+        # the fields it understood before; this evidence is for the sidecar and
+        # quality summary, not for changing selection behavior.
+        segments.append(_segment_evidence(seg))
         if total:
             pct = 22 + int(min(1.0, float(seg.end) / total) * 20)
             job.update(progress=pct, message=f"Transcribing audio ({pct}%)")
 
-    language = getattr(info, "language", "en") or "en"
+    detected_language = getattr(info, "language", requested_language or "en") or "en"
+    raw_probability = getattr(info, "language_probability", None)
+    try:
+        language_probability = (
+            round(float(raw_probability), 4) if raw_probability is not None else None
+        )
+    except (TypeError, ValueError):
+        language_probability = None
+    job.update(
+        language=detected_language,
+        language_probability=language_probability,
+        language_requested=requested_language or "auto",
+    )
+    _write_transcript_evidence(
+        job,
+        segments,
+        info,
+        requested_language=requested_language,
+        detected_language=detected_language,
+        language_probability=language_probability,
+        total_duration=total,
+    )
     if not segments:
         common.warn("Whisper returned no speech; clips will use visual-only mode")
-    return segments, language, total
+    common.info(
+        f"Whisper language: {detected_language} "
+        f"(requested={requested_language or 'auto'}, "
+        f"confidence={language_probability if language_probability is not None else 'n/a'})"
+    )
+    return segments, detected_language, total
 
 
 def _trim_to_words(candidate: viral.Candidate, video_duration: float) -> tuple[float, float]:
@@ -475,6 +700,54 @@ def _persist_queue_item(item: dict, clip_path: Path, thumb_path: Path) -> None:
     common.write_json(paths.QUEUE / f"{item['id']}.json", item)
 
 
+def _trim_piece_variants(
+    job_id: str, piece_index: int, rendered_tags: Sequence[str]
+) -> None:
+    """Rewrite a piece's queue items so ``variants`` lists only real files."""
+    prefix = f"{job_id}-{piece_index:02d}-"
+    keep = set(rendered_tags)
+    for path in sorted(paths.QUEUE.glob(f"{prefix}*.json")):
+        try:
+            item = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        variants = [
+            variant
+            for variant in item.get("variants") or []
+            if str(variant.get("id", "")).rsplit("-", 1)[-1] in keep
+        ]
+        if variants != item.get("variants"):
+            item["variants"] = variants
+            common.write_json(path, item)
+
+
+def _segments_text(
+    segments: Iterable[viral.Segment], start: float, end: float
+) -> str:
+    """Transcript text that overlaps a source window."""
+    return " ".join(
+        segment.text.strip()
+        for segment in segments
+        if segment.start < end and segment.end > start
+    ).strip()
+
+
+def _discard_failed_voiceover(path: Path, label: str) -> None:
+    """Delete the MP3 a failed TTS attempt created - and only that file.
+
+    edge-tts opens the destination before audio arrives, so a failed attempt
+    leaves a zero-byte or truncated file in the job directory. The caller skips
+    the variant, which makes the leftover an orphan: it is never queued or
+    referenced. Cleanup is path-exact (no globbing) so another piece's, job's
+    or process's audio can never be removed, and a cleanup failure is logged
+    on its own line so the original TTS error stays the reported one.
+    """
+    try:
+        path.unlink(missing_ok=True)
+    except OSError as exc:
+        common.warn(f"Transform {label} cleanup failed for {path.name}: {exc}")
+
+
 def _render_transform(
     *,
     source: Path,
@@ -490,166 +763,340 @@ def _render_transform(
     broll_path: Path | None,
     hashtags: str,
     source_url: str,
+    count: int,
     channel: str = "",
     mode: str,
-) -> list[dict]:
-    """AI script rewrite -> edge-tts voiceover -> 21/30/59 s renders.
+) -> tuple[list[dict], int]:
+    """Rewrite and voice N distinct source segments into platform variants.
 
-    One transformative voiceover is generated per source video, then rendered
-    into the three platform lengths. Each output carries the zoompan punch-in,
-    the progress bar, the Pixabay B-roll fallback, the music bed at -20 dB and
-    the user's handle watermark. Returns the three queue items.
+    Selection is deliberately different from Viral Moments: each piece is a
+    60-110 s source window, long enough to narrate the longest target, chosen
+    best-first with overlap rejection so no two pieces reuse the same footage.
+    Each piece then gets its own rewritten narration, and each platform target
+    (21/30/59 s) gets its own complete-thought edit of that narration and its
+    own edge-tts voiceover. A variant is therefore never the same audio
+    truncated at a different length.
+
+    Pixabay B-roll is fetched per piece from a query derived from that piece's
+    narration (not one fixed search term) and is used as the visual bed.
+    Returns ``(queue_items, pieces_rendered)``.
     """
-    full_text = " ".join(
-        str(seg.get("text", "")).strip() for seg in segments_raw
-    ).strip()
-    if not full_text:
-        raise JobError("Transform mode needs a transcript - no speech found")
-
-    job.update(
-        stage="analyze",
-        progress=44,
-        message="Rewriting transcript into a transformative script (free LLM)",
-        language=language,
+    segments = viral.build_segments(segments_raw)
+    rms = viral.compute_rms(str(audio))
+    keywords = cfg.get("viral_keywords") or viral.DEFAULT_KEYWORDS
+    pieces, piece_report = selection.select_transform(
+        segments, rms, keywords, duration, count
     )
-    script, llm_source = transform.rewrite_script(full_text)
-    if not script:
-        raise JobError("Script rewriting produced an empty script")
+    if not pieces:
+        raise JobError("Transform mode found no usable source segment")
 
-    job.update(
-        progress=45,
-        message="Generating titles, descriptions and hashtags",
-    )
-    meta, meta_source = transform.generate_metadata(script, channel)
-
-    job.update(progress=46, message="Generating AI voiceover (edge-tts)")
-    vo_path, vo_words = transform.synthesize_voiceover(script, job_dir / "voiceover.mp3")
-    vo_info = renderer.probe(vo_path)
-    if float(vo_info.get("duration") or 0.0) <= 0.5:
-        raise JobError("Voiceover is too short")
-
-    caption_words = [
-        captions.CaptionWord(
-            start=float(w["start"]), end=float(w["end"]), text=str(w["text"])
-        )
-        for w in vo_words
-    ]
-
-    # Visual bed: score the transcript like viral mode and start at the best
-    # window, clamped so a full 59 s render still fits the source.
-    bed_start = 0.0
-    try:
-        rms = viral.compute_rms(str(audio))
-        segments = viral.build_segments(segments_raw)
-        keywords = cfg.get("viral_keywords") or viral.DEFAULT_KEYWORDS
-        cands = viral.find_candidates(segments, rms, keywords, 30, 45)
-        best = viral.select_top(cands, 1, 30, 45)
-        if best:
-            bed_start = float(best[0].start)
-    except Exception as exc:  # scoring is cosmetic here - never fail the job
-        common.warn(f"transform bed selection fell back to t=0: {exc}")
-    # Footage runs 1.1x-1.2x while the voiceover stays at 1.0x: the visual
-    # window is sized x footage_speed and the renderer compresses it back to
-    # the exact target with setpts (window/target = 1/speed -> 1.1-1.2x).
     footage_speed = max(
         1.1, min(1.2, float(cfg.get("transform_speed", 1.15) or 1.15))
     )
-    max_window = min(59.0 * footage_speed, duration)
-    bed_start = (
-        max(0.0, min(bed_start, duration - max_window))
-        if duration > max_window
-        else 0.0
-    )
-
     handle = (
         os.getenv("WATERMARK_HANDLE", "").strip()
         or str(cfg.get("handle", "") or "").strip()
     )
-    hook = script.split(". ")[0].strip().rstrip(".") if script else ""
-    base_title = hook.title() if hook else "Transformed Story"
-
+    pixabay_key = os.getenv("PIXABAY_API_KEY", "").strip()
+    total_variants = len(pieces) * len(TRANSFORM_FORMATS)
+    occupied = scheduling.occupied_queue_slots(paths.QUEUE, cfg)
+    slots = scheduling.next_available_slots(
+        cfg, total_variants, occupied=occupied
+    )
     queue_items: list[dict] = []
-    slots = scheduling.next_slots(cfg, len(TRANSFORM_FORMATS))
-    total = len(TRANSFORM_FORMATS)
-    # Every sibling render carries the full 21/30/59 s manifest so the
-    # dashboard can offer all three versions as tabs on one clip card.
-    variants = [
-        {
-            "id": f"{job_id}-{i + 1:02d}-{tag}",
-            "platform": tag,
-            "label": label,
-            "seconds": secs,
-        }
-        for i, (secs, label, tag) in enumerate(TRANSFORM_FORMATS)
-    ]
-    for idx, (seconds, platform, tag) in enumerate(TRANSFORM_FORMATS):
-        clip_id = f"{job_id}-{idx + 1:02d}-{tag}"
-        job.update(
-            stage="render",
-            progress=50 + idx * 15,
-            message=f"Rendering {seconds}s {platform} version ({idx + 1}/{total})",
-        )
-        target = float(seconds)
-        win_end = min(duration, bed_start + target * footage_speed)
-        clip_path = job_dir / f"{clip_id}.mp4"
-        thumb_path = job_dir / f"{clip_id}.jpg"
-        words_for = [w for w in caption_words if w.start < target]
-        render_meta = renderer.render_clip(
-            source,
-            clip_path,
-            bed_start,
-            win_end,
-            words_for,
-            cfg,
-            hook=hook,
-            transcript=script,
-            broll=broll_path,
-            thumb_path=thumb_path,
-            info=info,
-            max_duration=target,
-            voiceover=vo_path,
-            target_duration=target,
-            hook_seconds=3.0,
-            zoom_effect=True,
-            progress_bar=True,
-            handle=handle,
-            music_db=-20.0,
-        )
-        slot = slots[idx] if idx < len(slots) else scheduling.next_slot(cfg)
-        scheduled = scheduling.jitter(slot)
-        item = _build_queue_item(
-            clip_id=clip_id,
-            job_id=job_id,
-            source_url=source_url,
-            source_title=base_title,
-            title=f"{base_title} ({seconds}s {platform})",
-            hook=hook,
-            caption=f"{hook} {hashtags}".strip(),
-            transcript=script,
-            viral_score=None,
-            reasons=[f"transform:{llm_source}", f"voiceover:{seconds}s"],
-            start=bed_start,
-            end=win_end,
-            mode=mode,
-            scheduled=scheduled,
-            clip_path=clip_path,
-            render_meta=render_meta,
-            meta=meta,
-            meta_source=meta_source,
-            channel=channel,
-            extras={
-                "llm": llm_source,
-                "voiceover": "edge-tts",
-                "platform": tag,
-                "seconds": seconds,
-                "variants": variants,
-            },
-        )
-        _persist_queue_item(item, clip_path, thumb_path)
-        queue_items.append(item)
+    errors: list[str] = []
+    narration_sources: list[str] = []
+    pieces_rendered = 0
+    rendered_variants = 0
 
-    job.update(stage="render", progress=94, message="Transform renders complete")
-    return queue_items
+    job.update(
+        stage="analyze",
+        progress=44,
+        message=(
+            f"Rewriting {len(pieces)} of {count} source segments "
+            f"(each into up to {len(TRANSFORM_FORMATS)} platform versions)"
+        ),
+        language=language,
+        selected_count=len(pieces),
+        fallback_count=piece_report.get("fallback", 0),
+        selection_quality={
+            key: piece_report.get(key)
+            for key in ("quality", "quality_rejected", "quality_rejections")
+            if key in piece_report
+        },
+    )
+
+    for piece_index, piece in enumerate(pieces, start=1):
+        piece_text = (piece.candidate.text or "").strip() or _segments_text(
+            segments, piece.start, piece.end
+        )
+        if not piece_text:
+            errors.append(f"piece {piece_index}: no transcript")
+            common.warn(f"Transform piece {piece_index} has no transcript - skipped")
+            continue
+        assessment = piece.candidate.quality
+        if isinstance(assessment, dict) and assessment.get("status") == "poor":
+            reason = "; ".join(assessment.get("reasons") or [])[:240]
+            errors.append(
+                f"piece {piece_index}: rejected poor transcript quality"
+                + (f" ({reason})" if reason else "")
+            )
+            common.warn(
+                f"Transform piece {piece_index} was not rewritten: poor transcript quality"
+            )
+            continue
+
+        job.update(
+            progress=44 + int((piece_index - 1) / max(1, len(pieces)) * 8),
+            message=f"Rewriting source segment {piece_index}/{len(pieces)}",
+        )
+        script, llm_source = transform.rewrite_script(
+            piece_text,
+            max_words=transform.words_for_seconds(TRANSFORM_FORMATS[-1][0]),
+        )
+        narration_sources.append(llm_source)
+        if not script:
+            errors.append(f"piece {piece_index}: empty rewrite")
+            continue
+        meta, meta_source = transform.generate_metadata(script, channel)
+        job.update(
+            llm_model=transform.LAST_MODEL or None,
+            llm_fallback_reason=transform.LAST_FALLBACK_REASON or None,
+        )
+
+        piece_broll = broll_path
+        if pixabay_key:
+            try:
+                piece_broll = (
+                    broll_mod.fetch(transform.broll_query(script, keywords))
+                    or broll_path
+                )
+            except Exception as exc:  # B-roll is cosmetic - never fail a piece
+                common.warn(f"Per-piece B-roll unavailable: {exc}")
+
+        # Every sibling render carries the full manifest so the dashboard can
+        # offer this piece's platform versions on one clip card.
+        variants = [
+            {
+                "id": f"{job_id}-{piece_index:02d}-{tag}",
+                "platform": tag,
+                "label": label,
+                "seconds": secs,
+            }
+            for secs, label, tag in TRANSFORM_FORMATS
+        ]
+        hook = script.split(". ")[0].strip().rstrip(".") or "Transformed Story"
+        base_title = hook.title() if hook else "Transformed Story"
+        piece_rendered = False
+        rendered_tags: list[str] = []
+
+        for seconds, platform, tag in TRANSFORM_FORMATS:
+            target_words = transform.words_for_seconds(seconds)
+            variant_script = transform.fit_script(script, target_words)
+            # A short rewrite/fallback (especially when the provider failed)
+            # must not become a mostly-silent 21/30/59 s video. Extend it from
+            # the source transcript first; the duration check after TTS is the
+            # final guard when the source simply has no more speech.
+            if len(variant_script.split()) < int(target_words * 0.65):
+                variant_script = transform.extend_script(
+                    variant_script, piece_text, target_words
+                )
+            if not variant_script:
+                errors.append(f"piece {piece_index} {tag}: empty script")
+                continue
+            clip_id = f"{job_id}-{piece_index:02d}-{tag}"
+            job.update(
+                stage="render",
+                progress=50 + int(rendered_variants / max(1, total_variants) * 44),
+                message=(
+                    f"Rendering segment {piece_index}/{len(pieces)} - "
+                    f"{seconds}s {platform}"
+                ),
+            )
+
+            vo_path = job_dir / f"{clip_id}.mp3"
+            try:
+                _, vo_words = transform.synthesize_voiceover(
+                    variant_script, vo_path
+                )
+                vo_info = renderer.probe(vo_path)
+                if float(vo_info.get("duration") or 0.0) <= 0.5:
+                    raise RuntimeError("voiceover is too short")
+            except Exception as exc:
+                # A missing edge-tts (package, network) must not lose the other
+                # pieces: record the limitation and keep going.
+                errors.append(
+                    f"piece {piece_index} {tag}: voiceover unavailable ({exc})"
+                )
+                common.warn(f"Transform {clip_id} skipped: {exc}")
+                # Only this attempt's own output is removed; the TTS error above
+                # was already recorded and is never replaced by a cleanup error.
+                _discard_failed_voiceover(vo_path, clip_id)
+                continue
+
+            target = float(seconds)
+            voiceover_seconds = float(vo_info.get("duration") or 0.0)
+            if voiceover_seconds < target * transform.MIN_NARRATION_RATIO:
+                errors.append(
+                    f"piece {piece_index} {tag}: narration incomplete "
+                    f"({voiceover_seconds:.1f}s of {target:.0f}s; "
+                    f"minimum {transform.MIN_NARRATION_RATIO:.0%})"
+                )
+                common.warn(
+                    f"Transform {clip_id} skipped: narration is only "
+                    f"{voiceover_seconds:.1f}s for a {target:.0f}s target"
+                )
+                _discard_failed_voiceover(vo_path, clip_id)
+                continue
+            caption_words = [
+                captions.CaptionWord(
+                    start=float(word["start"]),
+                    end=float(word["end"]),
+                    text=str(word["text"]),
+                )
+                for word in vo_words
+                if float(word["start"]) < target
+            ]
+
+            piece_start = max(0.0, piece.start)
+            piece_end = min(duration, piece.end)
+            window = min(piece_end - piece_start, target * footage_speed)
+            if window <= 0.5:
+                errors.append(
+                    f"piece {piece_index} {tag}: source window too short"
+                )
+                continue
+            bed_start = min(piece_start, max(0.0, duration - window))
+            win_end = min(duration, bed_start + window)
+            clip_path = job_dir / f"{clip_id}.mp4"
+            thumb_path = job_dir / f"{clip_id}.jpg"
+            try:
+                render_meta = renderer.render_clip(
+                    source,
+                    clip_path,
+                    bed_start,
+                    win_end,
+                    caption_words,
+                    cfg,
+                    hook=hook,
+                    transcript=variant_script,
+                    broll=piece_broll,
+                    thumb_path=thumb_path,
+                    info=info,
+                    max_duration=target,
+                    voiceover=vo_path,
+                    target_duration=target,
+                    hook_seconds=3.0,
+                    zoom_effect=True,
+                    progress_bar=True,
+                    handle=handle,
+                    music_db=-20.0,
+                    force_broll=True,
+                    captions_during_hook=True,
+                )
+            except Exception as exc:  # one bad variant must not sink the job
+                detail = common.redact_secrets(str(exc))[:300]
+                errors.append(f"piece {piece_index} {tag}: render failed ({detail})")
+                common.warn(f"Transform {clip_id} render failed: {detail}")
+                # The renderer drops its own output; the ASS sidecar and any
+                # thumbnail are this loop's to clean up.
+                for leftover in (clip_path, thumb_path, clip_path.with_suffix(".ass")):
+                    try:
+                        leftover.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                continue
+            slot = (
+                slots[rendered_variants]
+                if rendered_variants < len(slots)
+                else scheduling.next_available_slots(
+                    cfg, 1, occupied=occupied | set(slots)
+                )[0]
+            )
+            item = _build_queue_item(
+                clip_id=clip_id,
+                job_id=job_id,
+                source_url=source_url,
+                source_title=base_title,
+                title=f"{base_title} ({seconds}s {platform})",
+                hook=hook,
+                caption=f"{hook} {hashtags}".strip(),
+                transcript=variant_script,
+                viral_score=None,
+                reasons=[
+                    f"transform:{llm_source}",
+                    f"voiceover:{seconds}s",
+                    f"source:{piece.start:.1f}-{piece.end:.1f}s",
+                ],
+                start=bed_start,
+                end=win_end,
+                mode=mode,
+                scheduled=scheduling.queue_slot(slot, cfg),
+                clip_path=clip_path,
+                render_meta=render_meta,
+                meta=meta,
+                meta_source=meta_source,
+                channel=channel,
+                extras={
+                    "llm": llm_source,
+                    "voiceover": "edge-tts",
+                    "platform": tag,
+                    "seconds": seconds,
+                    "piece": piece_index,
+                    "variants": variants,
+                    "fallback": bool(piece.fallback),
+                    "broll": render_meta.get("broll"),
+                    "quality": quality.compact(piece.candidate.quality),
+                },
+            )
+            _persist_queue_item(item, clip_path, thumb_path)
+            queue_items.append(item)
+            rendered_variants += 1
+            rendered_tags.append(tag)
+            piece_rendered = True
+
+        if piece_rendered:
+            pieces_rendered += 1
+            # The manifest was built before rendering, so drop the platform
+            # versions that never produced a file instead of advertising a
+            # download that 404s.
+            _trim_piece_variants(job_id, piece_index, rendered_tags)
+
+    llm_counts: dict[str, int] = {}
+    for source_name in narration_sources:
+        llm_counts[source_name] = llm_counts.get(source_name, 0) + 1
+    llm_source = "none"
+    if len(llm_counts) == 1:
+        llm_source = next(iter(llm_counts))
+    elif llm_counts:
+        llm_source = "mixed"
+    job.update(
+        stage="render",
+        progress=94,
+        message=(
+            f"{pieces_rendered}/{len(pieces)} transformed segments rendered "
+            f"({len(queue_items)} platform files)"
+        ),
+        rendered_count=pieces_rendered,
+        rendered_files=len(queue_items),
+        transform_errors=errors[-10:],
+        selection_quality={
+            key: piece_report.get(key)
+            for key in ("quality", "quality_rejected", "quality_rejections")
+            if key in piece_report
+        },
+        # Real Gemini narration vs template fallback is a fact about the job,
+        # not just a per-clip reason string. Template output is what keeps a
+        # job alive when the provider is down, so it must stay visible.
+        llm_source=llm_source,
+        llm_sources=llm_counts,
+        llm_fallback=llm_counts.get("template", 0) > 0,
+        llm_fallback_count=llm_counts.get("template", 0),
+    )
+    if not queue_items:
+        detail = errors[0] if errors else "voiceover dependency unavailable"
+        raise JobError(f"Transform produced no outputs: {detail}")
+    return queue_items, pieces_rendered
 
 
 def _abort_handler(signum, frame) -> None:
@@ -697,12 +1144,26 @@ def run(args: argparse.Namespace) -> int:
     global _ACTIVE_JOB_ID
     paths.ensure_dirs()
     cfg = common.load_config()
+    # Saved browser preferences arrive as one JSON blob. They are applied first
+    # so every explicit per-job flag below still wins over a stored value.
+    if getattr(args, "user_config_json", None):
+        try:
+            user_prefs = json.loads(args.user_config_json)
+        except (TypeError, ValueError):
+            user_prefs = None
+        if isinstance(user_prefs, dict):
+            selection.apply_user_config(cfg, user_prefs)
     if getattr(args, "youtube_auto_post", None):
         cfg["youtube_auto_post"] = args.youtube_auto_post == "true"
     if getattr(args, "transform_speed", None):
         cfg["transform_speed"] = args.transform_speed
-    if getattr(args, "clip_max_seconds", None):
-        cfg["clip_max_seconds"] = float(args.clip_max_seconds)
+    if getattr(args, "clip_max_seconds", None) is not None:
+        try:
+            requested_max = float(args.clip_max_seconds)
+        except (TypeError, ValueError):
+            requested_max = 0.0
+        if requested_max > 0:
+            cfg["clip_max_seconds"] = requested_max
 
     # Per-job user-config overrides (from the browser localStorage Preferences).
     # These only touch the fields the settings UI lets the user personalise and
@@ -767,6 +1228,8 @@ def run(args: argparse.Namespace) -> int:
                 cfg[key] = float(val)
             except (TypeError, ValueError):
                 pass
+    transcribe_language = _resolve_whisper_language(args, cfg)
+    min_s, max_s = selection.duration_bounds(cfg)
     num_shorts = int(args.num_shorts or cfg.get("shorts_per_video", 10))
     job_id = paths.safe_id(args.job_id or datetime.now().strftime("job-%Y%m%d-%H%M%S"))
     mode = getattr(args, "mode", "viral")
@@ -820,61 +1283,56 @@ def run(args: argparse.Namespace) -> int:
         audio = extract_audio(source, job_id)
 
         if mode == "equal":
-            # Equal-slices mode: divide total duration by num_shorts and cut
-            # even windows from start to finish. No transcript, no viral score,
-            # no caption burn-in (captions need word timestamps).
-            segments_raw = []
-            language = "en"
+            # Equal-slices mode: transcribe so each interval can be matched to
+            # a complete spoken thought, then pick one segment per interval.
+            # The D/N intervals are search regions, never clip lengths.
+            segments_raw, language, _ = transcribe(audio, job, language=transcribe_language)
             job.update(
                 stage="analyze",
                 progress=44,
-                message="Slicing evenly into equal segments",
+                message=f"Finding a complete segment in each of {num_shorts} equal intervals",
                 language=language,
             )
-            candidates = []
-            if duration >= num_shorts * 3:
-                step = duration / num_shorts
-                for i in range(num_shorts):
-                    start = i * step
-                    end = min(duration, start + max(3.0, duration / num_shorts))
-                    candidates.append(
-                        viral.Candidate(
-                            start=round(start, 3),
-                            end=round(end, 3),
-                            text="",
-                            words=[],
-                            score=round(max(20.0, 60.0 - i * 3.0), 1),
-                            reasons=["equal slice - visual highlight"],
-                        )
-                    )
-            else:
-                # Very short source: just split at a fixed interval.
-                step = max(3.0, duration / num_shorts)
-                for i in range(num_shorts):
-                    start = i * step
-                    end = min(duration, start + step)
-                    if end - start < 2.0:
-                        break
-                    candidates.append(
-                        viral.Candidate(
-                            start=round(start, 3),
-                            end=round(end, 3),
-                            text="",
-                            words=[],
-                            score=round(40.0, 1),
-                            reasons=["equal slice - visual highlight"],
-                        )
-                    )
-            selected = candidates[:num_shorts]
+            segments = viral.build_segments(segments_raw)
+            keywords = cfg.get("viral_keywords") or viral.DEFAULT_KEYWORDS
+            selected, equal_report = selection.select_equal(
+                segments, duration, num_shorts, min_s, max_s, keywords
+            )
+            empty_intervals = [
+                row for row in equal_report["intervals"] if not row["selected"]
+            ]
             job.update(
                 stage="render",
                 progress=46,
-                message=f"Rendering {len(selected)} vertical shorts (equal slices)",
-                candidates=len(selected),
+                message=(
+                    f"Rendering {len(selected)} of {num_shorts} equal-slice clips"
+                    + (
+                        f" ({len(empty_intervals)} intervals had no usable speech)"
+                        if empty_intervals
+                        else ""
+                    )
+                ),
+                candidates=equal_report.get("selected", len(selected)),
+                selected_count=len(selected),
+                empty_intervals=len(empty_intervals),
+                selection_quality={
+                    key: equal_report.get(key)
+                    for key in ("quality", "quality_rejected")
+                    if key in equal_report
+                },
             )
+            if empty_intervals:
+                common.warn(
+                    f"Equal Slices: {len(empty_intervals)} of {num_shorts} intervals "
+                    "had no complete speech segment within the duration limits"
+                )
+            if not selected:
+                raise JobError("Equal Slices found no usable speech in any interval")
         elif mode == "viral":
-            # Viral mode: keep the existing AI-driven transcript logic.
-            segments_raw, language, _ = transcribe(audio, job)
+            # Viral mode: score the transcript, then keep the strongest
+            # distinct moments. A transcript-less source gets evenly spaced
+            # visual windows, flagged as fallbacks with no viral score.
+            segments_raw, language, _ = transcribe(audio, job, language=transcribe_language)
             job.update(
                 stage="analyze",
                 progress=44,
@@ -885,38 +1343,44 @@ def run(args: argparse.Namespace) -> int:
             rms = viral.compute_rms(str(audio))
             segments = viral.build_segments(segments_raw)
             keywords = cfg.get("viral_keywords") or viral.DEFAULT_KEYWORDS
-            min_s = float(cfg.get("clip_min_seconds", 30) or 30)
-            max_s = float(cfg.get("clip_max_seconds", 45) or 45)
-
-            candidates = viral.find_candidates(segments, rms, keywords, min_s, max_s)
-            selected = viral.select_top(candidates, num_shorts, min_s, max_s)
-            if len(selected) < num_shorts:
-                extra = viral.fallback_windows(duration, num_shorts, min_s, max_s)
-                for cand in extra:
-                    if len(selected) >= num_shorts:
-                        break
-                    if all(abs(cand.start - s.start) > 1.5 for s in selected):
-                        selected.append(cand)
-                selected.sort(key=lambda c: c.start)
-
+            selected, viral_report = selection.select_viral(
+                segments, rms, keywords, num_shorts, min_s, max_s, duration
+            )
             if not selected:
-                raise JobError("No usable segments found in this video")
+                raise JobError(
+                    "No usable segments found in this video"
+                    + (
+                        f" (no transcript window inside {min_s:g}-{max_s:g}s)"
+                        if segments
+                        else " (no transcript)"
+                    )
+                )
+            shortfall = viral_report["shortfall"]
             job.update(
                 stage="render",
                 progress=46,
-                message=f"Rendering {len(selected)} vertical shorts",
-                candidates=len(candidates),
+                message=(
+                    f"Rendering {len(selected)} of {num_shorts} vertical shorts"
+                    + (f" ({shortfall} fewer than requested)" if shortfall else "")
+                ),
+                candidates=viral_report["candidates"],
+                selected_count=len(selected),
+                fallback_count=viral_report["fallback"],
+                selection_quality={
+                    key: viral_report.get(key)
+                    for key in ("quality", "quality_rejected")
+                    if key in viral_report
+                },
             )
         else:
-            # Transform mode: transcribe only. The transform renderer below
-            # rewrites the script, speaks it with edge-tts and produces the
-            # 21/30/59 s outputs, so no per-candidate windows are needed.
-            segments_raw, language, _ = transcribe(audio, job)
-            candidates = []
+            # Transform mode: transcribe, then rewrite N distinct source
+            # segments into N transformed pieces (each with platform variants).
+            segments_raw, language, _ = transcribe(audio, job, language=transcribe_language)
             selected = []
 
             if not segments_raw:
                 raise JobError("Transform mode needs a transcript - no speech found")
+            job.update(selected_count=0)
 
         broll_path = None
         if os.getenv("PIXABAY_API_KEY", "").strip():
@@ -926,11 +1390,15 @@ def run(args: argparse.Namespace) -> int:
 
         job_dir = _next_job_dir(job_id)
         queue_items: list[dict[str, Any]] = []
-        slots = scheduling.next_slots(cfg, len(selected))
+        pieces_rendered: int | None = None
+        occupied = scheduling.occupied_queue_slots(paths.QUEUE, cfg)
+        slots = scheduling.next_available_slots(
+            cfg, len(selected), occupied=occupied
+        )
         hashtags = str(cfg.get("hashtags", ""))
 
         if mode == "transform":
-            queue_items = _render_transform(
+            queue_items, pieces_rendered = _render_transform(
                 source=source,
                 audio=audio,
                 info=info,
@@ -944,24 +1412,30 @@ def run(args: argparse.Namespace) -> int:
                 broll_path=broll_path,
                 hashtags=hashtags,
                 source_url=args.url or str(source),
+                count=num_shorts,
                 channel=channel,
                 mode=mode,
             )
 
-        for index, candidate in enumerate(selected, start=1):
+        for index, selected_item in enumerate(selected, start=1):
+            # Phase 6 defect A: selection returns ``Selected`` wrappers around
+            # a ``viral.Candidate``, but the render loop was reading ``.score``,
+            # ``.words`` and ``.text`` off the wrapper itself - which raised
+            # AttributeError on the first clip of every Viral/Equal job.
+            # Unwrap once here; the fallback flag drives the queue metadata
+            # below so a fallback window is never presented as a scored moment.
+            candidate = selected_item.candidate
+            is_fallback = selected_item.fallback
             clip_id = f"{job_id}-{index:02d}"
-            base_pct = 46 + int((index - 1) / len(selected) * 48)
-            hook = ""
-            transcript = ""
-            words = []
-            title = f"Equal Slice {index}"
-
+            base_pct = 46 + int((index - 1) / max(1, len(selected)) * 48)
+            title = None
             if mode == "equal":
-                # Equal mode: no transcript, no captions, no hook text.
-                # Just cut the vertical segment and let the renderer handle
-                # the cinematic fallback.
+                # The interval selector already returns word-bounded segments,
+                # so the cut keeps the chosen speech intact and never crosses
+                # the interval boundary (no overlap with the next slice).
                 clip_start = round(candidate.start, 3)
                 clip_end = round(candidate.end, 3)
+                title = f"Equal Slice {index}"
                 job.update(
                     stage="render",
                     progress=base_pct,
@@ -969,15 +1443,21 @@ def run(args: argparse.Namespace) -> int:
                 )
             else:
                 clip_start, clip_end = _trim_to_words(candidate, duration)
-                words = _relative_words(candidate, clip_start)
-                hook = viral.hook_text(candidate)
-                transcript = candidate.text.strip()
-                title = hook.title() if hook else f"African Tale #{index}"
+                # A fallback window carries no score (``None``), so the message
+                # must not format it as a number.
+                score_label = (
+                    "-" if candidate.score is None else f"{candidate.score:.0f}"
+                )
                 job.update(
                     stage="render",
                     progress=base_pct,
-                    message=f"Rendering clip {index}/{len(selected)} (score {candidate.score:.0f})",
+                    message=f"Rendering clip {index}/{len(selected)} (score {score_label})",
                 )
+            words = _relative_words(candidate, clip_start)
+            hook = viral.hook_text(candidate)
+            transcript = candidate.text.strip()
+            if title is None:
+                title = hook.title() if hook else f"African Tale #{index}"
 
             clip_path = job_dir / f"{clip_id}.mp4"
             thumb_path = job_dir / f"{clip_id}.jpg"
@@ -986,58 +1466,21 @@ def run(args: argparse.Namespace) -> int:
             # DEFAULT_HIGHLIGHT_WORDS in captions.py when not configured).
             highlight_words = cfg.get("highlight_words", captions.DEFAULT_HIGHLIGHT_WORDS)
 
-            if mode == "equal":
-                # Equal mode: no transcript, no captions, no hook text.
-                # Just cut the vertical segment and let the renderer handle
-                # the cinematic fallback.
-                clip_start = round(candidate.start, 3)
-                clip_end = round(candidate.end, 3)
-                job.update(
-                    stage="render",
-                    progress=base_pct,
-                    message=f"Rendering equal slice {index}/{len(selected)}",
-                )
-                render_meta = renderer.render_clip(
-                    source,
-                    clip_path,
-                    clip_start,
-                    clip_end,
-                    words,
-                    cfg,
-                    hook=hook,
-                    transcript=transcript,
-                    broll=broll_path,
-                    thumb_path=thumb_path,
-                    info=info,
-                    highlight_words=highlight_words,
-                    max_duration=cfg.get("clip_max_seconds", 25) or 25,
-                )
-            else:
-                clip_start, clip_end = _trim_to_words(candidate, duration)
-                words = _relative_words(candidate, clip_start)
-                hook = viral.hook_text(candidate)
-                transcript = candidate.text.strip()
-                title = hook.title() if hook else f"African Tale #{index}"
-                job.update(
-                    stage="render",
-                    progress=base_pct,
-                    message=f"Rendering clip {index}/{len(selected)} (score {candidate.score:.0f})",
-                )
-                render_meta = renderer.render_clip(
-                    source,
-                    clip_path,
-                    clip_start,
-                    clip_end,
-                    words,
-                    cfg,
-                    hook=hook,
-                    transcript=transcript,
-                    broll=broll_path,
-                    thumb_path=thumb_path,
-                    info=info,
-                    highlight_words=highlight_words,
-                    max_duration=cfg.get("clip_max_seconds", 25) or 25,
-                )
+            render_meta = renderer.render_clip(
+                source,
+                clip_path,
+                clip_start,
+                clip_end,
+                words,
+                cfg,
+                hook=hook,
+                transcript=transcript,
+                broll=broll_path,
+                thumb_path=thumb_path,
+                info=info,
+                highlight_words=highlight_words,
+                max_duration=max_s,
+            )
 
             # Queue this clip right away so EVERY rendered clip lands in the
             # queue. This block used to sit outside the loop, which meant only
@@ -1047,9 +1490,15 @@ def run(args: argparse.Namespace) -> int:
             slot = (
                 slots[index - 1]
                 if index - 1 < len(slots)
-                else scheduling.next_slot(cfg)
+                else scheduling.next_available_slots(
+                    cfg, 1, occupied=occupied | set(slots)
+                )[0]
             )
-            scheduled = scheduling.jitter(slot)
+            scheduled = scheduling.queue_slot(slot, cfg)
+            queue_reasons = list(candidate.reasons)
+            if is_fallback:
+                queue_reasons.insert(0, "fallback: evenly spaced visual window")
+            queue_reasons.append(f"quality:{quality.status_of(candidate)}")
             item = _build_queue_item(
                 clip_id=clip_id,
                 job_id=job_id,
@@ -1057,10 +1506,15 @@ def run(args: argparse.Namespace) -> int:
                 source_title=title,
                 title=title,
                 hook=hook,
-                caption=viral.social_caption(candidate, hashtags) if mode == "viral" else transcript,
+                caption=viral.social_caption(candidate, hashtags),
                 transcript=transcript,
-                viral_score=round(candidate.score, 1) if mode == "viral" else None,
-                reasons=candidate.reasons if mode == "viral" else [],
+                # A fallback window is never presented as a scored moment.
+                viral_score=(
+                    round(candidate.score, 1)
+                    if mode == "viral" and not is_fallback
+                    else None
+                ),
+                reasons=queue_reasons,
                 start=clip_start,
                 end=clip_end,
                 mode=mode,
@@ -1070,6 +1524,13 @@ def run(args: argparse.Namespace) -> int:
                 meta=meta,
                 meta_source=meta_source,
                 channel=channel,
+                extras={
+                    **({
+                        "fallback": True,
+                        "fallback_reason": "no transcript available",
+                    } if is_fallback else {}),
+                    "quality": quality.compact(candidate.quality),
+                },
             )
             _persist_queue_item(item, clip_path, thumb_path)
             queue_items.append(item)
@@ -1080,13 +1541,45 @@ def run(args: argparse.Namespace) -> int:
             "source_url": args.url or str(source),
             "source_title": title,
             "language": language,
+            "language_probability": job.data.get("language_probability"),
+            "language_requested": job.data.get("language_requested", "auto"),
+            # Additive fields: old jobs/manifests simply lack them and continue
+            # to load; the full evidence lives in the relative sidecar.
+            "transcript_sidecar": job.data.get("transcript_sidecar"),
+            "transcript_quality": job.data.get("transcript_quality"),
+            # Additive Stage 3B diagnostic: quality counts and rejected windows
+            # used by this run's selection. Old manifests simply lack it.
+            "selection_quality": job.data.get("selection_quality"),
             "duration": round(duration, 2),
             "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "requested_count": num_shorts,
+            "selected_count": int(job.data.get("selected_count") or 0),
+            "rendered_count": int(
+                job.data.get("rendered_count") or len(queue_items)
+            ),
+            "rendered_files": len(queue_items),
             "clip_count": len(queue_items),
+            # Whether narration was really written by the provider or fell back
+            # to the template is part of the run's record, not only a log line.
+            "llm_source": job.data.get("llm_source"),
+            "llm_sources": job.data.get("llm_sources"),
+            "llm_model": job.data.get("llm_model"),
+            "llm_fallback_reason": job.data.get("llm_fallback_reason"),
+            "llm_fallback_count": job.data.get("llm_fallback_count", 0),
+            "pieces_rendered": pieces_rendered,
             "clips": queue_items,
         }
         common.write_json(job_dir / "metadata.json", manifest)
-        job.finish(queue_items, export_dir=str(job_dir))
+        job.finish(
+            queue_items,
+            export_dir=str(job_dir),
+            requested_count=num_shorts,
+            **(
+                {"pieces_rendered": pieces_rendered}
+                if pieces_rendered is not None
+                else {}
+            ),
+        )
 
         # Auto-post to YouTube Shorts if the user enabled it. The uploader
         # reads its credentials from the environment (YOUTUBE_* variables),
@@ -1142,17 +1635,21 @@ def run(args: argparse.Namespace) -> int:
             telegram.send_message(f"❌ Clip job failed: {message[:500]}")
         return 1
     finally:
+        # Free disk on /tmp - but ONLY when the source was actually ours to
+        # delete. The stray glob below used to run unconditionally, so it
+        # re-deleted the very file the ``--keep-source`` branch above had
+        # deliberately preserved (defect C in the Phase 6 acceptance run).
         if source and not args.keep_source and not args.local_file:
             for suffix in (".mp4", ".mkv", ".webm", ".wav", ".part"):
                 try:
                     (paths.DOWNLOADS / f"{job_id}{suffix}").unlink(missing_ok=True)
                 except OSError:
                     pass
-        for stray in glob.glob(str(paths.DOWNLOADS / f"{job_id}*")):
-            try:
-                os.remove(stray)
-            except OSError:
-                pass
+            for stray in glob.glob(str(paths.DOWNLOADS / f"{job_id}*")):
+                try:
+                    os.remove(stray)
+                except OSError:
+                    pass
         if locked:
             release_lock(job_id)
         _ACTIVE_JOB_ID = ""
@@ -1165,9 +1662,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-shorts", type=int, default=10, help="How many clips to render (default 10)")
     parser.add_argument("--job-id", help="Stable job id supplied by the dashboard/bot")
     parser.add_argument("--mode", choices=["viral", "equal", "transform"], default="viral", help="Detection mode: 'viral' (best 30-45s clips), 'equal' (evenly sliced) or 'transform' (AI rewrite + voiceover, 21/30/59s outputs)")
+    parser.add_argument("--language", help="Whisper language code (for example 'en'); default is automatic detection")
     parser.add_argument("--keep-source", action="store_true", help="Keep the downloaded source file")
     parser.add_argument("--no-notify", action="store_true", help="Do not send Telegram messages")
-    parser.add_argument("--clip-max-seconds", type=float, default=25.0, help="Max clip length in seconds (default 25)")
+    parser.add_argument("--clip-max-seconds", type=float, default=None, help="Max clip length in seconds (default: config.json clip_max_seconds)")
+    parser.add_argument("--user-config-json", help="Saved user preferences as JSON (lowest-priority per-job overrides)")
     parser.add_argument("--original-channel", help="Original creator handle for the attribution line")
     parser.add_argument(
         "--youtube-auto-post",
