@@ -12,6 +12,9 @@ export async function GET() {
       config: {
         timezone: config.timezone,
         posting_times: config.posting_times,
+        // The generate panel seeds its count input from this value; omitting
+        // it made the input always start at the hardcoded 10.
+        shorts_per_video: config.shorts_per_video,
         platforms: config.platforms,
         youtube_auto_post: config.youtube_auto_post,
         hashtags: config.hashtags,

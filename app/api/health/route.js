@@ -1,9 +1,12 @@
-import { listQueue, listPosted, listJobs, loadConfig } from '@/lib/store';
+import { listQueue, listPosted, listJobs, loadConfig, reconcileStaleJobs } from '@/lib/store';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 export async function GET() {
+  // A worker that died with the previous app process cannot report its own
+  // exit; the health poll (every 20 s) is the recovery point that clears it.
+  reconcileStaleJobs();
   const queue = listQueue();
   const posted = listPosted();
   const running = listJobs(10).find((job) => job.status === 'running');

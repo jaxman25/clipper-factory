@@ -2,7 +2,7 @@ import archiver from 'archiver';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
-import { DIRS, listQueue, listPosted, findClip } from '@/lib/store';
+import { DIRS, downloadClips, findClip } from '@/lib/store';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -34,7 +34,8 @@ export async function GET(request) {
     });
   }
 
-  const clips = [...listQueue(), ...listPosted()];
+  // Zero-byte or missing videos are never packaged as a finished clip.
+  const clips = downloadClips();
   if (!clips.length) return Response.json({ error: 'queue is empty' }, { status: 404 });
 
   for (const clip of clips) {

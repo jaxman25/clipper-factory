@@ -2,9 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { getServerSession } from 'next-auth';
 import { deductCredit, ensureUser, getCredits, isAdminEmail, normalizeEmail } from '@/lib/credits';
-import { LOCAL_HOSTNAMES, requestHostname } from '@/lib/auth';
+import { isLocalRequest } from '@/lib/auth';
 import { authOptions } from '@/lib/next-auth';
-import { DIRS, ensureDirs, listJobs, markJobErrorIfRunning, readJob, sanitizeId, updateJSON, writeJSONIfAbsent } from '@/lib/store';
+import { DIRS, ensureDirs, listJobs, markJobErrorIfRunning, readJob, reconcileStaleJobs, sanitizeId, updateJSON, writeJSONIfAbsent } from '@/lib/store';
+import { buildWorkerArgs } from '@/lib/generate-args';
 import { startPython } from '@/lib/spawn';
 
 export const dynamic = 'force-dynamic';
@@ -39,9 +40,11 @@ export async function POST(request) {
   // credit per accepted job; 0 credits = 403 with a nudge to buy more.
   // The gate runs before any work so an empty balance never touches the
   // lock, the queue or the worker.
-  const host = requestHostname(request);
+  // Only a genuine local-development request skips sign-in and credits.
+  // isLocalRequest() ignores x-forwarded-host and is always false in
+  // production, so a forged header can no longer claim to be the owner.
   let payerEmail = null;
-  if (!LOCAL_HOSTNAMES.has(host)) {
+  if (!isLocalRequest(request)) {
     const session = await getServerSession(authOptions);
     const email = normalizeEmail(session?.user?.email);
     if (!email) {
@@ -78,16 +81,31 @@ export async function POST(request) {
       { status: 400 }
     );
   }
+  const language = String(body.language || '').trim();
+  if (language && !/^(auto|[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?)$/.test(language)) {
+    return Response.json(
+      { error: 'language must be "auto" or an ISO language code such as "en"' },
+      { status: 400 }
+    );
+  }
   const youtubeAutoPost =
     body.youtube_auto_post === true ? true : body.youtube_auto_post === false ? false : null;
   // Transform mode fields (anti-flag pipeline)
   const sourceUrl = url;
   const originalChannel = String(body.original_channel || '').trim();
   const transformSpeed = Number(body.transform_speed);
-  const maxClipSeconds = Math.max(1, Math.min(120, Number(body.clip_max_seconds) || 25));
   const userConfig =
     body.user_config && typeof body.user_config === 'object'
       ? body.user_config
+      : null;
+  // The clip-length override is opt-in. The old unconditional default of 25 s
+  // silently overrode config.json's 45 s, which made clip_min (30) > clip_max
+  // (25) and zeroed viral candidate generation. An explicit per-job value wins
+  // over a saved preference; with neither, the worker uses config.json.
+  const requestedMax = body.clip_max_seconds ?? userConfig?.clip_max_seconds;
+  const maxClipSeconds =
+    requestedMax != null && Number.isFinite(Number(requestedMax))
+      ? Math.max(1, Math.min(120, Number(requestedMax)))
       : null;
   const overrides = {
     timezone: userConfig?.timezone,
@@ -108,6 +126,10 @@ export async function POST(request) {
     youtube_auto_post: userConfig?.youtube_auto_post,
   };
   ensureDirs();
+
+  // A job left 'running' by a worker that died with the previous app process
+  // must not block this request forever.
+  reconcileStaleJobs();
 
   // Refuse to stampede the free CPU with a second whisper/ffmpeg job.
   const active = listJobs(20).find(
@@ -152,7 +174,11 @@ export async function POST(request) {
     message: 'Queued for the clip worker',
     source_url: url,
     num_shorts: numShorts,
+    requested_count: numShorts,
+    selected_count: 0,
+    rendered_count: 0,
     mode: mode,
+    language: language || 'auto',
     clips: [],
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -162,43 +188,18 @@ export async function POST(request) {
   try {
     worker = startPython(
       'backend/main.py',
-      [
-        '--url', url,
-        '--job-id', jobId,
-        '--num-shorts', String(numShorts),
-        '--mode', mode,
-        ...(originalChannel ? ['--original-channel', originalChannel] : []),
-        ...(youtubeAutoPost !== null ? ['--youtube-auto-post', String(youtubeAutoPost)] : []),
-        ...(transformSpeed >= 1.1 && transformSpeed <= 1.2
-          ? ['--transform-speed', String(transformSpeed)]
-          : []),
-        '--clip-max-seconds', String(maxClipSeconds),
-        ...(overrides.timezone != null ? ['--user-timezone', String(overrides.timezone)] : []),
-        ...(overrides.posting_times && Array.isArray(overrides.posting_times) && overrides.posting_times.length
-          ? ['--user-posting-times', JSON.stringify(overrides.posting_times)]
-          : []),
-        ...(overrides.shorts_per_video != null ? ['--user-shorts-per-video', String(overrides.shorts_per_video)] : []),
-        ...(overrides.timezone != null ? ['--timezone', overrides.timezone] : []),
-        ...(overrides.posting_times && Array.isArray(overrides.posting_times) && overrides.posting_times.length
-          ? ['--posting-times', JSON.stringify(overrides.posting_times)]
-          : []),
-        ...(overrides.shorts_per_video != null ? ['--shorts-per-video', String(overrides.shorts_per_video)] : []),
-        ...(overrides.clip_min_seconds != null ? ['--clip-min-seconds', String(overrides.clip_min_seconds)] : []),
-        ...(overrides.clip_max_seconds != null ? ['--clip-max-seconds', String(overrides.clip_max_seconds)] : []),
-        ...(overrides.playback_speed != null ? ['--playback-speed', String(overrides.playback_speed)] : []),
-        ...(overrides.drum_volume_db != null ? ['--drum-volume-db', String(overrides.drum_volume_db)] : []),
-        ...(overrides.caption_words_per_card != null ? ['--caption-words-per-card', String(overrides.caption_words_per_card)] : []),
-        ...(overrides.user_config != null && typeof overrides.user_config === 'object'
-          ? ['--user-config-json', JSON.stringify(overrides.user_config)]
-          : []),
-        ...(overrides.outro_text != null ? ['--user-outro-text', overrides.outro_text] : []),
-        ...(overrides.hashtags != null ? ['--user-hashtags', overrides.hashtags] : []),
-        ...(overrides.caption_color != null ? ['--user-caption-color', overrides.caption_color] : []),
-        ...(overrides.hook_seconds != null ? ['--hook-seconds', String(overrides.hook_seconds)] : []),
-        ...(overrides.outro_seconds != null ? ['--outro-seconds', String(overrides.outro_seconds)] : []),
-        ...(overrides.instagram === true ? ['--user-instagram', 'true'] : overrides.instagram === false ? ['--user-instagram', 'false'] : []),
-        ...(overrides.tiktok === true ? ['--user-tiktok', 'true'] : overrides.tiktok === false ? ['--user-tiktok', 'false'] : []),
-      ],
+      buildWorkerArgs({
+        url,
+        jobId,
+        numShorts,
+        mode,
+        language,
+        maxClipSeconds,
+        originalChannel,
+        youtubeAutoPost,
+        transformSpeed,
+        overrides: { ...overrides, user_config: userConfig },
+      }),
       jobId
     );
   } catch (err) {
