@@ -1,6 +1,7 @@
 {
   "timezone": "Africa/Nairobi",
   "posting_times": ["19:00", "21:00"],
+  "schedule_jitter_seconds": 0,
   "shorts_per_video": 10,
   "clip_min_seconds": 30,
   "clip_max_seconds": 45,
