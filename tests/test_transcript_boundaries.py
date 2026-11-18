@@ -86,6 +86,7 @@ class SegmentSanitizationTests(unittest.TestCase):
                 "words": [
                     {"start": 0, "end": 1, "word": "Hello", "probability": 0.9},
                     {"start": None, "end": 2, "word": "world"},
+                    {"start": 2, "end": 2, "word": "zero-duration"},
                     {"start": 3, "end": 2, "word": "reversed"},
                     {"start": 2, "end": math.inf, "word": "infinite"},
                     {"start": 3, "end": 4, "word": "again.", "probability": 0.8},

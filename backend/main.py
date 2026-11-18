@@ -599,7 +599,10 @@ def _trim_to_words(
     language: str | None = None,
 ) -> tuple[float, float]:
     """Return word-refined clip bounds, or the original segment bounds."""
-    if isinstance(candidate.boundary, dict) and candidate.boundary.get("applied"):
+    if isinstance(candidate.boundary, dict) and (
+        candidate.boundary.get("applied")
+        or candidate.boundary.get("fallback") == selection.TEXT_ALIGNMENT_FALLBACK
+    ):
         return round(candidate.start, 3), round(candidate.end, 3)
     allowed_end = float(video_duration or candidate.end)
     limit = float(max_seconds or allowed_end)

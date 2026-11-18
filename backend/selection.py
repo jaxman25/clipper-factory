@@ -19,6 +19,7 @@ logic can be unit-tested without ffmpeg, whisper or the network.
 """
 from __future__ import annotations
 
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -160,6 +161,7 @@ def _boundary_metadata(result: dict[str, Any], applied: bool) -> dict[str, Any]:
 
 
 _REFINEMENT_TOLERANCE = 1e-6
+TEXT_ALIGNMENT_FALLBACK = "text_alignment_unverified"
 
 
 def _word_text(word: Any) -> str:
@@ -184,11 +186,23 @@ def _word_bounds(word: Any) -> tuple[float | None, float | None]:
     )
 
 
+def _joined_word_text(words: Sequence[Any], language: str | None) -> str:
+    return transcript_boundaries.join_segment_text(
+        [_word_text(word) for word in words], language
+    )
+
+
 def _joined_word_tokens(words: Sequence[Any], language: str | None) -> list[str]:
     return transcript_boundaries.normalized_tokens(
-        transcript_boundaries.join_segment_text(
-            [_word_text(word) for word in words], language
-        )
+        _joined_word_text(words, language)
+    )
+
+
+def _punctuation_signature(text: Any) -> str:
+    """Return the ordered punctuation characters after NFKC normalization."""
+    normalised = unicodedata.normalize("NFKC", str(text or ""))
+    return "".join(
+        char for char in normalised if unicodedata.category(char).startswith("P")
     )
 
 
@@ -228,7 +242,6 @@ def _final_text_from_refinement(
     if start is None or end is None or end <= start:
         return None
 
-    refined_text = []
     refined_bounds = []
     for word in refined_words:
         text = _word_text(word)
@@ -242,7 +255,6 @@ def _final_text_from_refinement(
             or word_end > end + _REFINEMENT_TOLERANCE
         ):
             return None
-        refined_text.append(text)
         refined_bounds.append((word_start, word_end))
 
     if (
@@ -275,7 +287,14 @@ def _final_text_from_refinement(
     original_tokens = transcript_boundaries.normalized_tokens(candidate.text)
     if not original_tokens:
         return None
-    if original_tokens != _joined_word_tokens(candidate_words, language):
+    joined_candidate_text = _joined_word_text(candidate_words, language)
+    if original_tokens != transcript_boundaries.normalized_tokens(
+        joined_candidate_text
+    ):
+        return None
+    if _punctuation_signature(candidate.text) != _punctuation_signature(
+        joined_candidate_text
+    ):
         return None
     if not inside_words:
         return None
@@ -284,7 +303,7 @@ def _final_text_from_refinement(
     refined_tokens = _joined_word_tokens(refined_words, language)
     if not _contains_contiguous_sequence(refined_tokens, inside_tokens):
         return None
-    return transcript_boundaries.join_segment_text(refined_text, language)
+    return _joined_word_text(refined_words, language)
 
 
 def _apply_refinement(
@@ -293,28 +312,35 @@ def _apply_refinement(
     *,
     language: str | None = None,
 ) -> bool:
-    """Apply a refinement only when it satisfies the duration/allowed bounds."""
-    applied = bool(result.get("within_limits"))
-    candidate.boundary = _boundary_metadata(result, applied)
-    if not applied:
+    """Apply boundaries, words and text together, or preserve the original."""
+    if not bool(result.get("within_limits")):
+        candidate.boundary = _boundary_metadata(result, False)
         return False
+
     final_text = _final_text_from_refinement(candidate, result, language)
+    refined_words = result.get("words") or []
+    new_words = [
+        viral.Word(
+            float(word["start"]),
+            float(word["end"]),
+            str(word.get("word") or "").strip(),
+            word.get("probability"),
+        )
+        for word in refined_words
+        if str(word.get("word") or "").strip()
+    ]
+    if final_text is None or not new_words:
+        metadata = _boundary_metadata(result, False)
+        metadata["text_alignment"] = "unverified"
+        metadata["fallback"] = TEXT_ALIGNMENT_FALLBACK
+        candidate.boundary = metadata
+        return False
+
     candidate.start = float(result["start"])
     candidate.end = float(result["end"])
-    refined_words = result.get("words") or []
-    if refined_words:
-        candidate.words = [
-            viral.Word(
-                float(word["start"]),
-                float(word["end"]),
-                str(word.get("word") or "").strip(),
-                word.get("probability"),
-            )
-            for word in refined_words
-            if str(word.get("word") or "").strip()
-        ]
-    if final_text is not None:
-        candidate.text = final_text
+    candidate.words = new_words
+    candidate.text = final_text
+    candidate.boundary = _boundary_metadata(result, True)
     return True
 
 

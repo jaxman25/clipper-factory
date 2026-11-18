@@ -96,7 +96,7 @@ def _sanitize_word(word: Any) -> dict[str, Any] | None:
 
     start = finite_time(_get(word, "start"))
     end = finite_time(_get(word, "end"))
-    if start is None or end is None or end < start:
+    if start is None or end is None or end <= start:
         return None
 
     payload["start"] = start
@@ -110,8 +110,9 @@ def sanitize_segments(raw_segments: Sequence[Any] | None) -> list[dict[str, Any]
 
     Segment text and metadata are copied without rewriting.  Segments with a
     missing, non-finite or reversed time range are omitted.  Words with invalid
-    timestamps are omitted from the word list; their text remains in the
-    segment's original ``text`` field.  Missing optional fields stay missing.
+    or non-positive time ranges are omitted from the word list; their text
+    remains in the segment's original ``text`` field.  Missing optional fields
+    stay missing.
     """
     if raw_segments is None:
         return []

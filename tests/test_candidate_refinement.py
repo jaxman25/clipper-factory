@@ -378,6 +378,8 @@ class FinalTextAlignmentTests(unittest.TestCase):
         selection._apply_refinement(item, result, language="en")
         self.assertEqual((item.start, item.end), (1.0, 3.0))
         self.assertEqual(item.text, "Second. Third.")
+        self.assertTrue(item.boundary["applied"])
+        self.assertEqual([entry.text for entry in item.words], ["Second.", "Third."])
 
     def test_expanded_refinement_updates_text_to_include_new_words(self):
         words = [word(0.0, 1.0, "First."), word(1.0, 2.0, "Second")]
@@ -397,14 +399,71 @@ class FinalTextAlignmentTests(unittest.TestCase):
         item = candidate(5.0, 35.0, [], text="Legacy transcript.")
         result = refine(item, min_s=30.0, max_s=45.0, language="en")
         selection._apply_refinement(item, result, language="en")
+        self.assertEqual((item.start, item.end), (5.0, 35.0))
         self.assertEqual(item.text, "Legacy transcript.")
+        self.assertEqual(item.words, [])
+        self.assertFalse(item.boundary["applied"])
+        self.assertEqual(item.boundary["fallback"], selection.TEXT_ALIGNMENT_FALLBACK)
 
     def test_invalid_word_coverage_keeps_original_text(self):
         words = [word(0.0, 1.0, "Hello"), viral.Word(None, 2.0, "world.")]
         item = candidate(0.0, 2.0, words, text="Hello world.")
         result = refine(item, min_s=1.0, max_s=2.0, language="en")
         selection._apply_refinement(item, result, language="en")
+        self.assertEqual((item.start, item.end), (0.0, 2.0))
         self.assertEqual(item.text, "Hello world.")
+        self.assertEqual([entry.text for entry in item.words], ["Hello", "world."])
+        self.assertFalse(item.boundary["applied"])
+        self.assertEqual(item.boundary["fallback"], selection.TEXT_ALIGNMENT_FALLBACK)
+
+    def test_zero_duration_word_preserves_original_candidate_atomically(self):
+        words = [
+            word(0.0, 1.0, "First."),
+            word(1.0, 1.0, "zero"),
+            word(1.0, 2.0, "Second."),
+        ]
+        item = candidate(0.0, 3.0, words, text="First. zero Second.")
+        result = self._result(0.0, 2.0, [words[0], words[2]])
+        selection._apply_refinement(item, result, language="en")
+        self.assertEqual((item.start, item.end), (0.0, 3.0))
+        self.assertEqual(item.text, "First. zero Second.")
+        self.assertEqual(
+            [entry.text for entry in item.words], ["First.", "zero", "Second."]
+        )
+        self.assertFalse(item.boundary["applied"])
+        self.assertEqual(item.boundary["fallback"], selection.TEXT_ALIGNMENT_FALLBACK)
+
+    def test_incomplete_word_coverage_preserves_original_candidate(self):
+        words = [word(0.0, 1.0, "Hello")]
+        item = candidate(0.0, 2.0, words, text="Hello world.")
+        result = self._result(0.0, 1.0, words)
+        selection._apply_refinement(item, result, language="en")
+        self.assertEqual((item.start, item.end), (0.0, 2.0))
+        self.assertEqual(item.text, "Hello world.")
+        self.assertEqual([entry.text for entry in item.words], ["Hello"])
+        self.assertFalse(item.boundary["applied"])
+        self.assertEqual(item.boundary["fallback"], selection.TEXT_ALIGNMENT_FALLBACK)
+
+    def test_missing_punctuation_in_words_preserves_original_candidate(self):
+        words = [word(0.0, 1.0, "Hello"), word(1.0, 2.0, "world")]
+        item = candidate(0.0, 2.0, words, text="Hello world.")
+        selection._apply_refinement(
+            item, self._result(0.0, 2.0, words), language="en"
+        )
+        self.assertEqual((item.start, item.end), (0.0, 2.0))
+        self.assertEqual(item.text, "Hello world.")
+        self.assertEqual([entry.text for entry in item.words], ["Hello", "world"])
+        self.assertFalse(item.boundary["applied"])
+        self.assertEqual(item.boundary["fallback"], selection.TEXT_ALIGNMENT_FALLBACK)
+
+    def test_fallback_is_not_reapplied_by_render_trimming(self):
+        words = [word(0.0, 1.0, "First"), word(1.0, 2.0, "Second"), word(2.0, 3.0, "Third")]
+        item = candidate(0.0, 3.0, words, text="First. Second. Third.")
+        result = self._result(1.0, 3.0, [words[1], words[2]])
+        selection._apply_refinement(item, result, language="en")
+        self.assertEqual(
+            main._trim_to_words(item, 10.0, 1.0, 2.0, language="en"), (0.0, 3.0)
+        )
 
     LONG = (
         "The spirit warned the village at midnight and the elders listened "
@@ -459,6 +518,35 @@ class FinalTextAlignmentTests(unittest.TestCase):
         item = candidate(0.0, 2.0, words, text="你好世界。 再见世界。")
         selection._apply_refinement(item, self._result(0.0, 2.0, words), language="zh")
         self.assertEqual(item.text, "你好世界。再见世界。")
+
+    def test_duplicate_detection_uses_preserved_text_after_fallback(self):
+        timed = self._timed_words(0.0, self.LONG)
+        unpunctuated = [word(item.start, item.end, item.text.rstrip(".")) for item in timed]
+        first = candidate(0.0, float(len(timed)), unpunctuated, text=self.LONG)
+        second = candidate(0.0, float(len(timed)), unpunctuated, text=self.LONG)
+        partial = self._result(0.0, 5.0, unpunctuated[:5])
+        selection._apply_refinement(first, partial, language="en")
+        selection._apply_refinement(second, partial, language="en")
+        self.assertEqual(first.text, self.LONG)
+        self.assertEqual((second.start, second.end), (0.0, float(len(timed))))
+        duplicate, evidence, _, _, _ = selection._find_duplicate(
+            second, [first], language="en"
+        )
+        self.assertIs(duplicate, first)
+        self.assertTrue(evidence["duplicate"])
+
+    def test_caption_tokens_follow_preserved_text_after_fallback(self):
+        words = [word(0.0, 1.0, "Hello"), word(1.0, 2.0, "world")]
+        item = candidate(0.0, 2.0, words, text="Hello world.")
+        selection._apply_refinement(
+            item, self._result(0.0, 2.0, words), language="en"
+        )
+        captions = main._relative_words(item, 0.0, 2.0)
+        self.assertEqual([caption.text for caption in captions], ["Hello", "world"])
+        self.assertEqual(
+            boundaries.normalized_tokens(item.text),
+            boundaries.normalized_tokens(" ".join(c.text for c in captions)),
+        )
 
 
 class Stage3BAndLegacyIntegrationTests(unittest.TestCase):

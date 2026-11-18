@@ -361,6 +361,68 @@ class TransformRenderTests(unittest.TestCase):
         self.assertEqual(len(items), 3)
         self.assertEqual(self.rewrite_inputs, ["Corrected final source text."])
 
+    def test_transform_rewrite_uses_preserved_text_after_atomic_fallback(self):
+        candidate = viral.Candidate(
+            0.0,
+            3.0,
+            "Original source text.",
+            [
+                viral.Word(0.0, 1.0, "Original"),
+                viral.Word(1.0, 2.0, "source"),
+                viral.Word(2.0, 3.0, "text"),
+            ],
+            50.0,
+            quality={"status": "good", "reasons": []},
+        )
+        selection._apply_refinement(
+            candidate,
+            {
+                "start": 0.0,
+                "end": 2.0,
+                "within_limits": True,
+                "source": "words",
+                "words": [
+                    {"start": 0.0, "end": 1.0, "word": "Original"},
+                    {"start": 1.0, "end": 2.0, "word": "source"},
+                ],
+            },
+            language="en",
+        )
+        report = {
+            "requested": 1,
+            "selected": 1,
+            "fallback": 0,
+            "quality": {"good": 1, "review": 0, "poor": 0},
+            "quality_rejected": 0,
+            "quality_rejections": [],
+        }
+        job = main.Job("job-transform-fallback", "https://example.com/v", 1, "transform")
+        with mock.patch.object(
+            main.selection,
+            "select_transform",
+            return_value=([selection.Selected(candidate)], report),
+        ):
+            items, pieces = main._render_transform(
+                source=Path("source.mp4"),
+                audio=Path("audio.wav"),
+                info={"width": 1920, "height": 1080, "has_audio": True},
+                duration=120.0,
+                segments_raw=[],
+                language="en",
+                job=job,
+                cfg={"clip_min_seconds": 30, "clip_max_seconds": 45},
+                job_id="job-transform-fallback",
+                job_dir=self.job_dir,
+                broll_path=None,
+                hashtags="#tag",
+                source_url="https://example.com/v",
+                count=1,
+                mode="transform",
+            )
+        self.assertEqual(pieces, 1)
+        self.assertEqual(len(items), 3)
+        self.assertEqual(self.rewrite_inputs, ["Original source text."])
+
     def test_each_requested_piece_produces_platform_variants(self):
         segments_raw = [
             {
