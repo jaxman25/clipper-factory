@@ -259,6 +259,7 @@ class TransformRenderTests(unittest.TestCase):
         for directory in (self.queue, self.jobs, self.job_dir):
             directory.mkdir(parents=True)
         self.scripts: list[str] = []
+        self.rewrite_inputs: list[str] = []
         self.patches = [
             mock.patch.object(main.paths, "QUEUE", self.queue),
             mock.patch.object(main.paths, "JOBS", self.jobs),
@@ -291,6 +292,7 @@ class TransformRenderTests(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _rewrite(self, text, max_words=None):
+        self.rewrite_inputs.append(text)
         return ("The spirit warned the village at midnight. " * 40).strip(), "gemini"
 
     def _probe(self, path):
@@ -314,6 +316,50 @@ class TransformRenderTests(unittest.TestCase):
             "speed": 1.15,
             "broll": None,
         }
+
+    def test_transform_rewrite_receives_refined_candidate_text(self):
+        candidate = viral.Candidate(
+            0.0,
+            70.0,
+            "Corrected final source text.",
+            [],
+            50.0,
+            quality={"status": "good", "reasons": []},
+        )
+        report = {
+            "requested": 1,
+            "selected": 1,
+            "fallback": 0,
+            "quality": {"good": 1, "review": 0, "poor": 0},
+            "quality_rejected": 0,
+            "quality_rejections": [],
+        }
+        job = main.Job("job-transform-text", "https://example.com/v", 1, "transform")
+        with mock.patch.object(
+            main.selection,
+            "select_transform",
+            return_value=([selection.Selected(candidate)], report),
+        ):
+            items, pieces = main._render_transform(
+                source=Path("source.mp4"),
+                audio=Path("audio.wav"),
+                info={"width": 1920, "height": 1080, "has_audio": True},
+                duration=120.0,
+                segments_raw=[],
+                language="en",
+                job=job,
+                cfg={"clip_min_seconds": 30, "clip_max_seconds": 45},
+                job_id="job-transform-text",
+                job_dir=self.job_dir,
+                broll_path=None,
+                hashtags="#tag",
+                source_url="https://example.com/v",
+                count=1,
+                mode="transform",
+            )
+        self.assertEqual(pieces, 1)
+        self.assertEqual(len(items), 3)
+        self.assertEqual(self.rewrite_inputs, ["Corrected final source text."])
 
     def test_each_requested_piece_produces_platform_variants(self):
         segments_raw = [

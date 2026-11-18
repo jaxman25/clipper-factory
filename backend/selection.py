@@ -159,12 +159,146 @@ def _boundary_metadata(result: dict[str, Any], applied: bool) -> dict[str, Any]:
     return metadata
 
 
-def _apply_refinement(candidate: viral.Candidate, result: dict[str, Any]) -> bool:
+_REFINEMENT_TOLERANCE = 1e-6
+
+
+def _word_text(word: Any) -> str:
+    if isinstance(word, dict):
+        value = word.get("word")
+        if value is None:
+            value = word.get("text")
+    else:
+        value = getattr(word, "text", None)
+        if value is None:
+            value = getattr(word, "word", None)
+    return str(value or "").strip()
+
+
+def _word_bounds(word: Any) -> tuple[float | None, float | None]:
+    if isinstance(word, dict):
+        start, end = word.get("start"), word.get("end")
+    else:
+        start, end = getattr(word, "start", None), getattr(word, "end", None)
+    return transcript_boundaries.finite_time(start), transcript_boundaries.finite_time(
+        end
+    )
+
+
+def _joined_word_tokens(words: Sequence[Any], language: str | None) -> list[str]:
+    return transcript_boundaries.normalized_tokens(
+        transcript_boundaries.join_segment_text(
+            [_word_text(word) for word in words], language
+        )
+    )
+
+
+def _contains_contiguous_sequence(
+    sequence: Sequence[str], part: Sequence[str]
+) -> bool:
+    if not part or len(part) > len(sequence):
+        return False
+    for index in range(len(sequence) - len(part) + 1):
+        if sequence[index : index + len(part)] == list(part):
+            return True
+    return False
+
+
+def _final_text_from_refinement(
+    candidate: viral.Candidate,
+    result: dict[str, Any],
+    language: str | None,
+) -> str | None:
+    """Return final text only when refinement has reliable word coverage.
+
+    Coverage requires the full original candidate text to be represented by
+    valid candidate words, every refined word to have a finite positive range
+    inside the final bounds, and the first/last refined words to align with
+    those bounds.  Candidate words retained inside the final window must also
+    appear continuously in the refined sequence.  Anything less conservative
+    is left on the original text rather than exposing a partial transcript.
+    """
+    if result.get("source") != "words":
+        return None
+    refined_words = list(result.get("words") or [])
+    if not refined_words:
+        return None
+
+    start = transcript_boundaries.finite_time(result.get("start"))
+    end = transcript_boundaries.finite_time(result.get("end"))
+    if start is None or end is None or end <= start:
+        return None
+
+    refined_text = []
+    refined_bounds = []
+    for word in refined_words:
+        text = _word_text(word)
+        word_start, word_end = _word_bounds(word)
+        if (
+            not text
+            or word_start is None
+            or word_end is None
+            or word_end <= word_start
+            or word_start < start - _REFINEMENT_TOLERANCE
+            or word_end > end + _REFINEMENT_TOLERANCE
+        ):
+            return None
+        refined_text.append(text)
+        refined_bounds.append((word_start, word_end))
+
+    if (
+        abs(refined_bounds[0][0] - start) > _REFINEMENT_TOLERANCE
+        or abs(refined_bounds[-1][1] - end) > _REFINEMENT_TOLERANCE
+    ):
+        return None
+
+    candidate_words = list(candidate.words or [])
+    if not candidate_words:
+        return None
+
+    inside_words = []
+    for word in candidate_words:
+        text = _word_text(word)
+        word_start, word_end = _word_bounds(word)
+        if (
+            not text
+            or word_start is None
+            or word_end is None
+            or word_end <= word_start
+        ):
+            return None
+        if (
+            word_start >= start - _REFINEMENT_TOLERANCE
+            and word_end <= end + _REFINEMENT_TOLERANCE
+        ):
+            inside_words.append(word)
+
+    original_tokens = transcript_boundaries.normalized_tokens(candidate.text)
+    if not original_tokens:
+        return None
+    if original_tokens != _joined_word_tokens(candidate_words, language):
+        return None
+    if not inside_words:
+        return None
+
+    inside_tokens = _joined_word_tokens(inside_words, language)
+    refined_tokens = _joined_word_tokens(refined_words, language)
+    if not _contains_contiguous_sequence(refined_tokens, inside_tokens):
+        return None
+    return transcript_boundaries.join_segment_text(refined_text, language)
+
+
+def _apply_refinement(
+    candidate: viral.Candidate,
+    result: dict[str, Any],
+    *,
+    language: str | None = None,
+) -> bool:
     """Apply a refinement only when it satisfies the duration/allowed bounds."""
     applied = bool(result.get("within_limits"))
     candidate.boundary = _boundary_metadata(result, applied)
     if not applied:
         return False
+    final_text = _final_text_from_refinement(candidate, result, language)
     candidate.start = float(result["start"])
     candidate.end = float(result["end"])
     refined_words = result.get("words") or []
@@ -179,6 +313,8 @@ def _apply_refinement(candidate: viral.Candidate, result: dict[str, Any]) -> boo
             for word in refined_words
             if str(word.get("word") or "").strip()
         ]
+    if final_text is not None:
+        candidate.text = final_text
     return True
 
 
@@ -203,7 +339,7 @@ def _refine_candidates(
             language=language,
             word_context=context,
         )
-        _apply_refinement(candidate, result)
+        _apply_refinement(candidate, result, language=language)
 
 
 def _duplicate_summary(evidence: dict[str, Any]) -> dict[str, Any]:

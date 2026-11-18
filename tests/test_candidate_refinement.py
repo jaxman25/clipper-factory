@@ -357,6 +357,110 @@ class CaptionBoundTests(unittest.TestCase):
         self.assertEqual([caption.text for caption in captions], ["valid"])
 
 
+class FinalTextAlignmentTests(unittest.TestCase):
+    @staticmethod
+    def _result(start, end, words):
+        return {
+            "start": start,
+            "end": end,
+            "within_limits": True,
+            "source": "words",
+            "words": [
+                {"start": item.start, "end": item.end, "word": item.text}
+                for item in words
+            ],
+        }
+
+    def test_trimmed_refinement_updates_text_to_final_words(self):
+        words = [word(0.0, 1.0, "First."), word(1.0, 2.0, "Second."), word(2.0, 3.0, "Third.")]
+        item = candidate(0.0, 3.0, words, text="First. Second. Third.")
+        result = refine(item, allowed_start=1.0, allowed_end=3.0, min_s=1.0, max_s=2.0, language="en")
+        selection._apply_refinement(item, result, language="en")
+        self.assertEqual((item.start, item.end), (1.0, 3.0))
+        self.assertEqual(item.text, "Second. Third.")
+
+    def test_expanded_refinement_updates_text_to_include_new_words(self):
+        words = [word(0.0, 1.0, "First."), word(1.0, 2.0, "Second")]
+        item = candidate(0.0, 2.0, words, text="First. Second")
+        context = words + [word(2.0, 3.0, "sentence.")]
+        result = refine(item, allowed_start=0.0, allowed_end=3.0, min_s=1.0, max_s=3.0, language="en", word_context=context)
+        selection._apply_refinement(item, result, language="en")
+        self.assertEqual(item.text, "First. Second sentence.")
+
+    def test_original_formatting_is_preserved(self):
+        words = [word(0.0, 1.0, "“Hello,”"), word(1.0, 2.0, "she"), word(2.0, 3.0, "said.")]
+        item = candidate(0.0, 3.0, words, text="“Hello,” she said.")
+        selection._apply_refinement(item, self._result(0.0, 3.0, words), language="en")
+        self.assertEqual(item.text, "“Hello,” she said.")
+
+    def test_legacy_fallback_keeps_original_text(self):
+        item = candidate(5.0, 35.0, [], text="Legacy transcript.")
+        result = refine(item, min_s=30.0, max_s=45.0, language="en")
+        selection._apply_refinement(item, result, language="en")
+        self.assertEqual(item.text, "Legacy transcript.")
+
+    def test_invalid_word_coverage_keeps_original_text(self):
+        words = [word(0.0, 1.0, "Hello"), viral.Word(None, 2.0, "world.")]
+        item = candidate(0.0, 2.0, words, text="Hello world.")
+        result = refine(item, min_s=1.0, max_s=2.0, language="en")
+        selection._apply_refinement(item, result, language="en")
+        self.assertEqual(item.text, "Hello world.")
+
+    LONG = (
+        "The spirit warned the village at midnight and the elders listened "
+        "carefully while the moon rose."
+    )
+    INTRO = "A traveller arrived before dawn and asked about the road."
+
+    @staticmethod
+    def _timed_words(start, text):
+        return [word(start + index, start + index + 1, token) for index, token in enumerate(text.split())]
+
+    def test_duplicate_detection_uses_final_text(self):
+        first_words = self._timed_words(0.0, self.LONG)
+        first = candidate(0.0, float(len(first_words)), first_words, text=self.LONG)
+        second_text = f"{self.INTRO} {self.LONG}"
+        second_words = self._timed_words(0.0, second_text)
+        second = candidate(0.0, float(len(second_words)), second_words, text=second_text)
+        split = len(self.INTRO.split())
+        selection._apply_refinement(first, self._result(0.0, float(len(first_words)), first_words), language="en")
+        selection._apply_refinement(
+            second,
+            self._result(float(split), float(len(second_words)), second_words[split:]),
+            language="en",
+        )
+        self.assertEqual(first.text, self.LONG)
+        self.assertEqual(second.text, self.LONG)
+        duplicate, evidence, _, _, _ = selection._find_duplicate(
+            second, [first], language="en"
+        )
+        self.assertIs(duplicate, first)
+        self.assertTrue(evidence["duplicate"])
+
+    def test_inverse_duplicate_case_compares_distinct_final_text(self):
+        first_words = self._timed_words(0.0, self.LONG)
+        first = candidate(0.0, float(len(first_words)), first_words, text=self.LONG)
+        second_text = f"{self.INTRO} {self.LONG}"
+        second_words = self._timed_words(0.0, second_text)
+        second = candidate(0.0, float(len(second_words)), second_words, text=second_text)
+        split = len(self.INTRO.split())
+        selection._apply_refinement(first, self._result(0.0, float(len(first_words)), first_words), language="en")
+        selection._apply_refinement(
+            second,
+            self._result(0.0, float(split), second_words[:split]),
+            language="en",
+        )
+        self.assertEqual(second.text, self.INTRO)
+        duplicate, _, _, _, _ = selection._find_duplicate(second, [first], language="en")
+        self.assertIsNone(duplicate)
+
+    def test_cjk_reconstruction_does_not_insert_spaces(self):
+        words = [viral.Word(0.0, 1.0, "你好世界。"), viral.Word(1.0, 2.0, "再见世界。")]
+        item = candidate(0.0, 2.0, words, text="你好世界。 再见世界。")
+        selection._apply_refinement(item, self._result(0.0, 2.0, words), language="zh")
+        self.assertEqual(item.text, "你好世界。再见世界。")
+
+
 class Stage3BAndLegacyIntegrationTests(unittest.TestCase):
     def test_quality_assessment_is_unchanged_before_refinement(self):
         segments = viral.build_segments([
