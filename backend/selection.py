@@ -23,9 +23,10 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 try:
-    from backend import quality, viral
+    from backend import quality, transcript_boundaries, viral
 except ImportError:  # pragma: no cover - direct execution
     import quality  # type: ignore
+    import transcript_boundaries  # type: ignore
     import viral  # type: ignore
 
 DEFAULT_MIN_SECONDS = 30.0
@@ -151,6 +152,172 @@ def _quality_counts(candidates: Sequence[viral.Candidate]) -> dict[str, int]:
     return counts
 
 
+def _boundary_metadata(result: dict[str, Any], applied: bool) -> dict[str, Any]:
+    """Structured boundary evidence without the potentially large word list."""
+    metadata = {key: value for key, value in result.items() if key != "words"}
+    metadata["applied"] = applied
+    return metadata
+
+
+def _apply_refinement(candidate: viral.Candidate, result: dict[str, Any]) -> bool:
+    """Apply a refinement only when it satisfies the duration/allowed bounds."""
+    applied = bool(result.get("within_limits"))
+    candidate.boundary = _boundary_metadata(result, applied)
+    if not applied:
+        return False
+    candidate.start = float(result["start"])
+    candidate.end = float(result["end"])
+    refined_words = result.get("words") or []
+    if refined_words:
+        candidate.words = [
+            viral.Word(
+                float(word["start"]),
+                float(word["end"]),
+                str(word.get("word") or "").strip(),
+                word.get("probability"),
+            )
+            for word in refined_words
+            if str(word.get("word") or "").strip()
+        ]
+    return True
+
+
+def _refine_candidates(
+    candidates: Sequence[viral.Candidate],
+    *,
+    segments: Sequence[viral.Segment],
+    allowed_start: float,
+    allowed_end: float,
+    min_seconds: float,
+    max_seconds: float,
+    language: str | None,
+) -> None:
+    context = viral._words_between(segments)
+    for candidate in candidates:
+        result = transcript_boundaries.refine_candidate(
+            candidate,
+            allowed_start,
+            allowed_end,
+            min_seconds,
+            max_seconds,
+            language=language,
+            word_context=context,
+        )
+        _apply_refinement(candidate, result)
+
+
+def _duplicate_summary(evidence: dict[str, Any]) -> dict[str, Any]:
+    """Compact, text-free duplicate evidence suitable for diagnostics."""
+    return {
+        "reason": evidence.get("reason"),
+        "left_tokens": evidence.get("left_tokens"),
+        "right_tokens": evidence.get("right_tokens"),
+        "containment": evidence.get("containment"),
+        "sequence_similarity": evidence.get("sequence_similarity"),
+        "token_overlap": evidence.get("token_overlap"),
+        "shared_4grams": evidence.get("shared_4grams"),
+        "longest_shared_block": evidence.get("longest_shared_block"),
+    }
+
+
+def _duplicate_record(
+    candidate: viral.Candidate,
+    accepted: viral.Candidate,
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "start": round(float(candidate.start), 3),
+        "end": round(float(candidate.end), 3),
+        "duplicate_of": {
+            "start": round(float(accepted.start), 3),
+            "end": round(float(accepted.end), 3),
+        },
+        **_duplicate_summary(evidence),
+    }
+
+
+def _find_duplicate(
+    candidate: viral.Candidate,
+    accepted_items: Sequence[Any],
+    *,
+    language: str | None,
+) -> tuple[Any | None, dict[str, Any] | None, bool, str | None, int]:
+    """Compare one candidate with earlier accepted candidates.
+
+    Returns ``(accepted_item, evidence, compared_any, not_compared_reason,
+    pair_count)``.  A missing or very short transcript is never rejected.
+    """
+    compared_any = False
+    not_compared: str | None = None
+    pairs = 0
+    for accepted_item in accepted_items:
+        accepted = (
+            accepted_item[0] if isinstance(accepted_item, tuple) else accepted_item
+        )
+        evidence = transcript_boundaries.text_duplicate_evidence(
+            candidate.text,
+            accepted.text,
+            language=language,
+        )
+        pairs += 1
+        if not evidence.get("compared"):
+            if not_compared is None:
+                not_compared = str(evidence.get("reason") or "missing_transcript")
+            continue
+        compared_any = True
+        if evidence.get("duplicate"):
+            return accepted_item, evidence, True, None, pairs
+    return None, None, compared_any, not_compared, pairs
+
+
+def _select_distinct(
+    candidates: Sequence[viral.Candidate],
+    count: int,
+    min_seconds: float,
+    max_seconds: float,
+    *,
+    language: str | None,
+) -> tuple[
+    list[viral.Candidate],
+    list[dict[str, Any]],
+    int,
+    dict[str, int],
+]:
+    """Greedy rank-order selection with overlap and duplicate protection.
+
+    Candidates arrive best-ranked first.  An overlapping or strongly
+    duplicated candidate is skipped, so the stronger accepted candidate is
+    always the one retained.  The returned order is chronological.
+    """
+    chosen: list[viral.Candidate] = []
+    rejections: list[dict[str, Any]] = []
+    not_compared = {"missing_transcript": 0, "too_short": 0}
+    compared_candidates = 0
+    for candidate in candidates:
+        if len(chosen) >= count:
+            break
+        if (
+            candidate.duration < min_seconds - 0.5
+            or candidate.duration > max_seconds + 0.5
+        ):
+            continue
+        if any(_overlap(candidate, accepted) for accepted in chosen):
+            continue
+        duplicate, evidence, compared_any, missing_reason, _ = _find_duplicate(
+            candidate, chosen, language=language
+        )
+        if compared_any:
+            compared_candidates += 1
+        elif missing_reason:
+            not_compared[missing_reason] = not_compared.get(missing_reason, 0) + 1
+        if duplicate is not None and evidence is not None:
+            rejections.append(_duplicate_record(candidate, duplicate, evidence))
+            continue
+        chosen.append(candidate)
+    chosen.sort(key=lambda item: item.start)
+    return chosen, rejections, compared_candidates, not_compared
+
+
 def select_viral(
     segments: Sequence[viral.Segment],
     rms: Sequence[float],
@@ -159,6 +326,7 @@ def select_viral(
     min_seconds: float,
     max_seconds: float,
     duration: float,
+    language: str | None = None,
 ) -> tuple[list[Selected], dict[str, Any]]:
     """Rank transcript windows and keep the strongest distinct moments.
 
@@ -173,8 +341,28 @@ def select_viral(
     # Good candidates outrank review candidates; review stays selectable, so a
     # legacy transcript with no metrics keeps its previous score-based order.
     acceptable = [candidate for candidate in candidates if not quality.is_poor(candidate)]
+    _refine_candidates(
+        acceptable,
+        segments=segments,
+        allowed_start=0.0,
+        allowed_end=max(0.0, float(duration)),
+        min_seconds=min_seconds,
+        max_seconds=max_seconds,
+        language=language,
+    )
     acceptable.sort(key=lambda item: (quality.rank(item), -item.score))
-    chosen = viral.select_top(acceptable, count, min_seconds, max_seconds)
+    # Overlap and text-level duplicates are checked on the refined boundaries
+    # and in rank order, so the stronger moment always survives.  Chronology is
+    # restored only after selection.
+    chosen, duplicate_rejections, duplicate_compared, duplicate_not_compared = (
+        _select_distinct(
+            acceptable,
+            count,
+            min_seconds,
+            max_seconds,
+            language=language,
+        )
+    )
     selected = [Selected(candidate) for candidate in chosen]
     fallback = 0
     if not segments:
@@ -201,6 +389,10 @@ def select_viral(
         "shortfall": max(0, count - len(selected)),
         "quality": counts,
         "quality_rejected": counts.get("poor", 0),
+        "duplicate_compared": duplicate_compared,
+        "duplicates_excluded": len(duplicate_rejections),
+        "duplicate_rejections": duplicate_rejections,
+        "duplicate_not_compared": duplicate_not_compared,
     }
     return selected, diagnostics
 
@@ -212,6 +404,7 @@ def select_equal(
     min_seconds: float,
     max_seconds: float,
     keywords: Sequence[str] | None = None,
+    language: str | None = None,
 ) -> tuple[list[Selected], dict[str, Any]]:
     """Pick one complete speech segment from each of ``count`` intervals.
 
@@ -224,6 +417,10 @@ def select_equal(
     count = max(1, int(count))
     report: list[dict[str, Any]] = []
     selected: list[Selected] = []
+    accepted_intervals: list[tuple[viral.Candidate, int]] = []
+    duplicate_rejections: list[dict[str, Any]] = []
+    duplicate_compared = 0
+    duplicate_not_compared = {"missing_transcript": 0, "too_short": 0}
     if duration <= 0:
         return [], {"requested": count, "selected": 0, "empty": count, "intervals": report}
 
@@ -233,16 +430,53 @@ def select_equal(
         high = min(duration, (index + 1) * width)
         best: tuple[int, float, list[viral.Segment], list[str], dict[str, Any]] | None = None
         poor_seen = 0
+        crossing_seen = 0
+
+        def usable(segment: viral.Segment) -> bool:
+            """A crossing segment is safe only when all its words are inside."""
+            if segment.start >= low - 1e-6 and segment.end <= high + 1e-6:
+                return True
+            words = [
+                word
+                for word in segment.words
+                if low - 1e-6 <= word.start and word.end <= high + 1e-6
+            ]
+            return bool(words) and len(words) == len(segment.words)
+
+        def effective_start(segment: viral.Segment) -> float:
+            if segment.start >= low - 1e-6:
+                return segment.start
+            starts = [
+                word.start
+                for word in segment.words
+                if low - 1e-6 <= word.start and word.end <= high + 1e-6
+            ]
+            return min(starts) if starts else segment.start
+
+        def effective_end(segment: viral.Segment) -> float:
+            if segment.end <= high + 1e-6:
+                return segment.end
+            ends = [
+                word.end
+                for word in segment.words
+                if low - 1e-6 <= word.start and word.end <= high + 1e-6
+            ]
+            return max(ends) if ends else segment.end
+
         for first, segment in enumerate(segments):
-            if segment.start < low or segment.end > high:
+            if not usable(segment):
+                if segment.start < high and segment.end > low:
+                    crossing_seen += 1
                 continue
             window: list[viral.Segment] = []
             for next_index in range(first, len(segments)):
                 following = segments[next_index]
-                if following.end > high:
+                if not usable(following):
+                    if following.start < high and following.end > low:
+                        crossing_seen += 1
                     break
                 window.append(following)
-                span = window[-1].end - window[0].start
+                span = effective_end(window[-1]) - effective_start(window[0])
                 if span < min_seconds:
                     continue
                 if span > max_seconds:
@@ -271,11 +505,15 @@ def select_equal(
                     # segment into whatever length the loop ended on.
                     best = (rank, score, list(window), reasons, assessment)
         if best is None:
-            reason = (
-                "only poor-quality speech candidates in this interval"
-                if poor_seen
-                else "no complete speech segment within the duration limits"
-            )
+            if poor_seen:
+                reason = "only poor-quality speech candidates in this interval"
+            elif crossing_seen:
+                reason = (
+                    "speech crossed this interval boundary and was excluded "
+                    "without a safe word-level trim"
+                )
+            else:
+                reason = "no complete speech segment within the duration limits"
             report.append(
                 {
                     "index": index + 1,
@@ -288,20 +526,81 @@ def select_equal(
                         "rejected_poor": poor_seen,
                     },
                     "quality_rejected_poor": poor_seen,
+                    "boundary_rejected": crossing_seen,
                 }
             )
             continue
         rank, score, window, reasons, assessment = best
         candidate = viral.Candidate(
-            start=window[0].start,
-            end=window[-1].end,
+            start=effective_start(window[0]),
+            end=effective_end(window[-1]),
             text=viral._join(window),
             words=viral._words_between(window),
             score=max(0.0, min(100.0, score * 2.1)),
             reasons=[f"equal interval {index + 1}/{count}"] + reasons,
             quality=assessment,
         )
+        _refine_candidates(
+            [candidate],
+            segments=segments,
+            allowed_start=low,
+            allowed_end=high,
+            min_seconds=min_seconds,
+            max_seconds=max_seconds,
+            language=language,
+        )
+        if not (
+            candidate.end > candidate.start
+            and candidate.start >= low - 1e-6
+            and candidate.end <= high + 1e-6
+        ):
+            report.append(
+                {
+                    "index": index + 1,
+                    "start": round(low, 3),
+                    "end": round(high, 3),
+                    "selected": False,
+                    "reason": "refined speech could not fit safely inside this interval",
+                    "quality": quality.compact(assessment),
+                    "quality_rejected_poor": poor_seen,
+                    "boundary_rejected": crossing_seen + 1,
+                }
+            )
+            continue
+        duplicate, evidence, compared_any, missing_reason, _ = _find_duplicate(
+            candidate, accepted_intervals, language=language
+        )
+        if compared_any:
+            duplicate_compared += 1
+        elif missing_reason:
+            duplicate_not_compared[missing_reason] = (
+                duplicate_not_compared.get(missing_reason, 0) + 1
+            )
+        if duplicate is not None and evidence is not None:
+            duplicate_candidate, duplicate_interval = duplicate
+            duplicate_rejections.append(
+                _duplicate_record(candidate, duplicate_candidate, evidence)
+            )
+            report.append(
+                {
+                    "index": index + 1,
+                    "start": round(low, 3),
+                    "end": round(high, 3),
+                    "selected": False,
+                    "reason": (
+                        "duplicate transcript content already selected in "
+                        f"interval {duplicate_interval + 1}"
+                    ),
+                    "quality": quality.compact(assessment),
+                    "quality_rejected_poor": poor_seen,
+                    "boundary_rejected": crossing_seen,
+                    "duplicate_of_interval": duplicate_interval + 1,
+                    "duplicate": _duplicate_summary(evidence),
+                }
+            )
+            continue
         selected.append(Selected(candidate))
+        accepted_intervals.append((candidate, index))
         report.append(
             {
                 "index": index + 1,
@@ -314,6 +613,12 @@ def select_equal(
                 ),
                 "quality": quality.compact(assessment),
                 "quality_rejected_poor": poor_seen,
+                "boundary_rejected": crossing_seen,
+                "boundary": (
+                    {key: value for key, value in candidate.boundary.items() if key != 'words'}
+                    if candidate.boundary
+                    else None
+                ),
             }
         )
 
@@ -375,6 +680,13 @@ def select_equal(
         "quality_rejected": sum(
             int(row.get("quality_rejected_poor") or 0) for row in report
         ),
+        "boundary_excluded": sum(
+            int(row.get("boundary_rejected") or 0) for row in report
+        ),
+        "duplicate_compared": duplicate_compared,
+        "duplicates_excluded": len(duplicate_rejections),
+        "duplicate_rejections": duplicate_rejections,
+        "duplicate_not_compared": duplicate_not_compared,
         "intervals": report,
     }
     return _sorted(selected), diagnostics
@@ -386,6 +698,7 @@ def select_transform(
     keywords: Sequence[str] | None,
     duration: float,
     count: int,
+    language: str | None = None,
 ) -> tuple[list[Selected], dict[str, Any]]:
     """Pick ``count`` distinct long source windows, one per transformed piece.
 
@@ -399,9 +712,24 @@ def select_transform(
     )
     counts = _quality_counts(candidates)
     acceptable = [candidate for candidate in candidates if not quality.is_poor(candidate)]
+    _refine_candidates(
+        acceptable,
+        segments=segments,
+        allowed_start=0.0,
+        allowed_end=max(0.0, float(duration)),
+        min_seconds=TRANSFORM_WINDOW_MIN,
+        max_seconds=TRANSFORM_WINDOW_MAX,
+        language=language,
+    )
     acceptable.sort(key=lambda item: (quality.rank(item), -item.score))
-    chosen = viral.select_top(
-        acceptable, count, TRANSFORM_WINDOW_MIN, TRANSFORM_WINDOW_MAX
+    chosen, duplicate_rejections, duplicate_compared, duplicate_not_compared = (
+        _select_distinct(
+            acceptable,
+            count,
+            TRANSFORM_WINDOW_MIN,
+            TRANSFORM_WINDOW_MAX,
+            language=language,
+        )
     )
     selected = [Selected(candidate) for candidate in chosen]
     fallback = 0
@@ -448,6 +776,33 @@ def select_transform(
             candidate.text = text
             candidate.quality = assessment
             candidate.reasons = ["fallback: evenly spaced source window"]
+            candidate.words = viral._words_between(overlap)
+            _refine_candidates(
+                [candidate],
+                segments=segments,
+                allowed_start=0.0,
+                allowed_end=max(0.0, float(duration)),
+                min_seconds=TRANSFORM_WINDOW_MIN,
+                max_seconds=TRANSFORM_WINDOW_MAX,
+                language=language,
+            )
+            # The fallback window may have moved to word boundaries.
+            if any(_overlap(candidate, item.candidate) for item in selected):
+                continue
+            duplicate, evidence, compared_any, missing_reason, _ = _find_duplicate(
+                candidate, [item.candidate for item in selected], language=language
+            )
+            if compared_any:
+                duplicate_compared += 1
+            elif missing_reason:
+                duplicate_not_compared[missing_reason] = (
+                    duplicate_not_compared.get(missing_reason, 0) + 1
+                )
+            if duplicate is not None and evidence is not None:
+                duplicate_rejections.append(
+                    _duplicate_record(candidate, duplicate, evidence)
+                )
+                continue
             selected.append(
                 Selected(
                     candidate,
@@ -466,5 +821,9 @@ def select_transform(
         "quality": counts,
         "quality_rejected": len(rejections) + len(fallback_rejections),
         "quality_rejections": rejections + fallback_rejections,
+        "duplicate_compared": duplicate_compared,
+        "duplicates_excluded": len(duplicate_rejections),
+        "duplicate_rejections": duplicate_rejections,
+        "duplicate_not_compared": duplicate_not_compared,
     }
     return selected, diagnostics

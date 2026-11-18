@@ -39,16 +39,20 @@ import backend.main as main  # noqa: E402
 def make_segments(duration: float, seg: float = 10.0, text: str = "The spirit warned the village at midnight."):
     raw = []
     start = 0.0
+    index = 0
     while start < duration:
+        # Each segment needs distinct content: Stage 3C-3 correctly refuses
+        # to present the same transcript at two different timestamps.
         raw.append(
             {
                 "start": start,
                 "end": min(duration, start + seg),
-                "text": text,
+                "text": f"{text} Story {index} continues with a different detail.",
                 "words": [],
             }
         )
         start += seg
+        index += 1
     return viral.build_segments(raw)
 
 
@@ -316,7 +320,10 @@ class TransformRenderTests(unittest.TestCase):
             {
                 "start": float(t),
                 "end": float(t + 10),
-                "text": "The spirit warned the village at midnight.",
+                "text": (
+                    "The spirit warned the village at midnight about story "
+                    f"{t // 10} and the lanterns that followed."
+                ),
                 "words": [],
             }
             for t in range(0, 1800, 10)
@@ -562,7 +569,10 @@ class RenderLoopTests(unittest.TestCase):
             {
                 "start": float(t),
                 "end": float(t + 10),
-                "text": "The spirit warned the village at midnight.",
+                "text": (
+                    "The spirit warned the village at midnight about story "
+                    f"{t // 10} and the lanterns that followed."
+                ),
                 "words": [],
             }
             for t in range(0, int(self.DURATION), 10)

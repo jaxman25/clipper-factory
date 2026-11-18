@@ -17,7 +17,10 @@ SEGMENTS = [
     {
         "start": float(t),
         "end": float(t + 10),
-        "text": "The spirit warned the village at midnight.",
+        "text": (
+            "The spirit warned the village at midnight about story "
+            f"{t // 10} and the lanterns that followed."
+        ),
         "words": [],
     }
     for t in range(0, 1800, 10)

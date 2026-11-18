@@ -31,7 +31,7 @@ if str(HERE.parent) not in sys.path:
 
 try:
     from backend import broll as broll_mod
-    from backend import captions, common, paths, quality, renderer, scheduling, selection, telegram, transform, transcript_quality, viral
+    from backend import captions, common, paths, quality, renderer, scheduling, selection, telegram, transform, transcript_boundaries, transcript_quality, viral
 except ImportError:  # pragma: no cover - fallback for direct execution
     import broll as broll_mod  # type: ignore
     import captions  # type: ignore
@@ -43,6 +43,7 @@ except ImportError:  # pragma: no cover - fallback for direct execution
     import selection  # type: ignore
     import telegram  # type: ignore
     import transform  # type: ignore
+    import transcript_boundaries  # type: ignore
     import transcript_quality  # type: ignore
     import viral  # type: ignore
 
@@ -590,23 +591,60 @@ def transcribe(
     return segments, detected_language, total
 
 
-def _trim_to_words(candidate: viral.Candidate, video_duration: float) -> tuple[float, float]:
-    start = max(0.0, candidate.start - 0.12)
-    end = min(video_duration, candidate.end + 0.3) if video_duration else candidate.end + 0.3
-    if end - start < 5.0:
-        end = min(video_duration or (start + 30.0), start + 30.0)
-    return round(start, 3), round(end, 3)
+def _trim_to_words(
+    candidate: viral.Candidate,
+    video_duration: float,
+    min_seconds: float = 5.0,
+    max_seconds: float | None = None,
+    language: str | None = None,
+) -> tuple[float, float]:
+    """Return word-refined clip bounds, or the original segment bounds."""
+    if isinstance(candidate.boundary, dict) and candidate.boundary.get("applied"):
+        return round(candidate.start, 3), round(candidate.end, 3)
+    allowed_end = float(video_duration or candidate.end)
+    limit = float(max_seconds or allowed_end)
+    result = transcript_boundaries.refine_candidate(
+        candidate,
+        0.0,
+        allowed_end,
+        min_seconds,
+        limit,
+        language=language,
+    )
+    if result.get("within_limits"):
+        return round(float(result["start"]), 3), round(float(result["end"]), 3)
+    return round(candidate.start, 3), round(candidate.end, 3)
 
 
-def _relative_words(candidate: viral.Candidate, clip_start: float) -> list[captions.CaptionWord]:
+def _relative_words(
+    candidate: viral.Candidate,
+    clip_start: float,
+    clip_end: float | None = None,
+) -> list[captions.CaptionWord]:
+    """Caption words intersecting the final clip, relative to its start."""
+    start = transcript_boundaries.finite_time(clip_start)
+    end = transcript_boundaries.finite_time(
+        candidate.end if clip_end is None else clip_end
+    )
+    if start is None or end is None or end <= start:
+        return []
+    duration = end - start
     out: list[captions.CaptionWord] = []
     for word in candidate.words:
-        if word.end <= clip_start:
+        word_start = transcript_boundaries.finite_time(getattr(word, "start", None))
+        word_end = transcript_boundaries.finite_time(getattr(word, "end", None))
+        if word_start is None or word_end is None or word_end <= word_start:
+            continue
+        if word_end <= start or word_start >= end:
+            continue
+        rel_start = max(0.0, word_start - start)
+        rel_end = min(duration, word_end - start)
+        if rel_end <= rel_start:
             continue
         out.append(
             captions.CaptionWord(
-                start=max(0.0, word.start - clip_start),
-                end=max(0.05, word.end - clip_start),
+                start=rel_start,
+                end=rel_end,
                 text=word.text,
             )
         )
@@ -785,7 +823,7 @@ def _render_transform(
     rms = viral.compute_rms(str(audio))
     keywords = cfg.get("viral_keywords") or viral.DEFAULT_KEYWORDS
     pieces, piece_report = selection.select_transform(
-        segments, rms, keywords, duration, count
+        segments, rms, keywords, duration, count, language
     )
     if not pieces:
         raise JobError("Transform mode found no usable source segment")
@@ -1296,7 +1334,7 @@ def run(args: argparse.Namespace) -> int:
             segments = viral.build_segments(segments_raw)
             keywords = cfg.get("viral_keywords") or viral.DEFAULT_KEYWORDS
             selected, equal_report = selection.select_equal(
-                segments, duration, num_shorts, min_s, max_s, keywords
+                segments, duration, num_shorts, min_s, max_s, keywords, language
             )
             empty_intervals = [
                 row for row in equal_report["intervals"] if not row["selected"]
@@ -1344,7 +1382,7 @@ def run(args: argparse.Namespace) -> int:
             segments = viral.build_segments(segments_raw)
             keywords = cfg.get("viral_keywords") or viral.DEFAULT_KEYWORDS
             selected, viral_report = selection.select_viral(
-                segments, rms, keywords, num_shorts, min_s, max_s, duration
+                segments, rms, keywords, num_shorts, min_s, max_s, duration, language
             )
             if not selected:
                 raise JobError(
@@ -1442,7 +1480,9 @@ def run(args: argparse.Namespace) -> int:
                     message=f"Rendering equal slice {index}/{len(selected)}",
                 )
             else:
-                clip_start, clip_end = _trim_to_words(candidate, duration)
+                clip_start, clip_end = _trim_to_words(
+                    candidate, duration, min_s, max_s, language
+                )
                 # A fallback window carries no score (``None``), so the message
                 # must not format it as a number.
                 score_label = (
@@ -1453,7 +1493,7 @@ def run(args: argparse.Namespace) -> int:
                     progress=base_pct,
                     message=f"Rendering clip {index}/{len(selected)} (score {score_label})",
                 )
-            words = _relative_words(candidate, clip_start)
+            words = _relative_words(candidate, clip_start, clip_end)
             hook = viral.hook_text(candidate)
             transcript = candidate.text.strip()
             if title is None:

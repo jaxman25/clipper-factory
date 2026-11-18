@@ -169,7 +169,19 @@ class ViralQualityTests(unittest.TestCase):
         self.assertEqual(diag["quality_rejected"], 2)
 
     def test_requested_count_shortfall_is_honest(self):
-        candidates = [candidate(0, 40, 90, "good"), candidate(100, 140, 80, "good")]
+        candidates = [
+            candidate(0, 40, 90, "good"),
+            viral.Candidate(
+                100,
+                140,
+                "A different account of the market and the rain that arrived after "
+                "the traders had already closed their stalls.",
+                [],
+                80,
+                reasons=["good fixture"],
+                quality=assessment_with("good"),
+            ),
+        ]
         with mock.patch.object(selection.viral, "find_candidates", return_value=candidates):
             selected, diag = selection.select_viral(
                 [viral.Segment(0, 1, "seed")], [], None, 5, 30, 45, 600

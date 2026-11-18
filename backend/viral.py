@@ -20,9 +20,10 @@ from dataclasses import dataclass, field
 from typing import Iterable, Sequence
 
 try:
-    from backend import quality, transcript_quality
+    from backend import quality, transcript_boundaries, transcript_quality
 except ImportError:  # pragma: no cover - direct execution
     import quality  # type: ignore
+    import transcript_boundaries  # type: ignore
     import transcript_quality  # type: ignore
 
 DEFAULT_KEYWORDS = [
@@ -77,6 +78,9 @@ class Candidate:
     score: float
     reasons: list[str] = field(default_factory=list)
     quality: dict | None = None
+    # Stage 3C-2 boundary evidence.  Optional so existing construction sites
+    # and old candidate records remain valid.
+    boundary: dict | None = None
 
     @property
     def duration(self) -> float:
@@ -196,16 +200,20 @@ def build_segments(raw_segments: Sequence[dict]) -> list[Segment]:
     metrics remain ``None`` and are reported as unavailable, not as poor.
     """
     segments: list[Segment] = []
-    for raw in raw_segments:
+    # Stage 3C-1: reject malformed/non-finite timestamps before converting to
+    # Segment objects.  Valid legacy segments keep exactly the same shape;
+    # invalid words are dropped only from the timing list, never from the
+    # segment's original text.
+    for raw in transcript_boundaries.sanitize_segments(raw_segments):
         text = (raw.get("text") or "").strip()
-        start = float(raw.get("start", 0.0))
-        end = float(raw.get("end", start))
+        start = float(raw["start"])
+        end = float(raw["end"])
         if not text or end <= start:
             continue
         words = [
             Word(
-                float(w.get("start", start)),
-                float(w.get("end", end)),
+                float(w["start"]),
+                float(w["end"]),
                 (w.get("word") or "").strip(),
                 transcript_quality.finite_float(w.get("probability")),
             )
